@@ -2,7 +2,7 @@
 
 Shared joint expense logbook for Ebrahim & Qadr — one running record of what the house spent, not a split/settle-up tool. One HTML file + one serverless function, backed by Upstash Redis. Works on phones, no build step.
 
-**PIN: `0101`**
+
 
 ## Files
 
