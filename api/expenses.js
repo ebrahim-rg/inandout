@@ -7,10 +7,17 @@
 // Item-level writes mean two phones can add/edit at the same time without clobbering
 // each other (unlike storing the whole list in a single key).
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+// Vercel's Upstash integration injects KV_REST_API_URL / KV_REST_API_TOKEN.
+// Upstash's own console calls them UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN.
+// Accept either, so it works however the database was linked.
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+
 const PIN = process.env.APP_PIN || "0101"; // must match PIN in index.html
-const KEY = "expenses";
+
+// Namespaced so this app can share a Redis database with other projects
+// without their keys colliding with ours.
+const KEY = process.env.EXPENSES_KEY || "inandout:expenses";
 
 async function redis(command) {
   const r = await fetch(REDIS_URL, {
@@ -32,7 +39,11 @@ export default async function handler(req, res) {
   if (!REDIS_URL || !REDIS_TOKEN) {
     return res
       .status(500)
-      .json({ error: "Missing UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN" });
+      .json({
+        error:
+          "No Redis credentials. Expected KV_REST_API_URL + KV_REST_API_TOKEN " +
+          "(Vercel Upstash integration) or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN.",
+      });
   }
 
   // ---- shared PIN gate ----
