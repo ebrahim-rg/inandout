@@ -37,7 +37,7 @@ git push -u origin main
 - Settings → Environment Variables → add these (all environments):
   - `UPSTASH_REDIS_REST_URL`
   - `UPSTASH_REDIS_REST_TOKEN`
-  - `APP_PIN` = `0101` (optional — the API defaults to `0101` if unset)
+  - `APP_PIN` = your chosen PIN (optional — the API falls back to the default hardcoded in `api/expenses.js` if unset)
 - Deploy. Open the URL on both phones → Share → **Add to Home Screen** for an app-like icon.
 
 If you add the env vars *after* the first deploy, hit **Redeploy** so they get picked up.
@@ -64,9 +64,9 @@ Currency is PKR via the `fmt()` helper — change `"Rs "` and the locale there i
 
 ## PIN
 
-Shared PIN keypad on open, default `0101`. It's stored after the first correct entry, so you each type it once per device. The API also checks it (`x-pin` header) — so the data can't be read by hitting `/api/expenses` directly.
+Shared PIN keypad on open. It's stored after the first correct entry, so you each type it once per device. The API also checks it (`x-pin` header) — so the data can't be read by hitting `/api/expenses` directly.
 
-To change it, edit `const PIN = "0101"` in `index.html` **and** set `APP_PIN` to the same value in Vercel. Long-press (or right-click) the "House Expenses" title to lock the app again.
+To change it, edit the `PIN` constant in `index.html` **and** set `APP_PIN` to the same value in Vercel. Long-press (or right-click) the "House Expenses" title to lock the app again.
 
 This is a convenience lock, not real security — the PIN is visible in the page source to anyone determined enough. Fine for keeping a household logbook private from casual eyes.
 

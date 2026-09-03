@@ -37,6 +37,14 @@
   .totsub{font-size:12px;color:var(--dim);padding-bottom:10px}
   .splitlab{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;font-weight:600;padding-bottom:6px}
   .split{display:flex;gap:8px;padding-bottom:14px}
+  .monthnav{display:flex;align-items:center;justify-content:center;gap:14px;padding-bottom:14px}
+  .monthnav button{
+    background:var(--card);border:1px solid var(--line);color:var(--txt);
+    width:32px;height:32px;border-radius:50%;font-size:15px;cursor:pointer;
+    display:grid;place-items:center;flex:0 0 auto
+  }
+  .monthnav button:disabled{opacity:.32;cursor:default}
+  .monthnav .mlabel{font-size:14px;font-weight:650;min-width:150px;text-align:center}
   .chip{
     flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;
     padding:9px 11px;
@@ -197,6 +205,11 @@
         <div class="v" id="sumQ">Rs 0</div>
       </div>
     </div>
+    <div class="monthnav">
+      <button type="button" id="mPrev">‹</button>
+      <span class="mlabel" id="mLabel">—</span>
+      <button type="button" id="mNext">›</button>
+    </div>
   </div>
 </header>
 
@@ -259,6 +272,24 @@ let items = [];        // {id, amount, item, payer, category, date, note, ts}
 let filter = "All";
 let editingId = null;
 let online = true;
+let viewMonth = currentMonthStr();   // "YYYY-MM" — month currently on screen
+
+function currentMonthStr() { return new Date().toISOString().slice(0, 7); }
+
+function monthLabel(m) {
+  const [y, mo] = m.split("-").map(Number);
+  return new Date(y, mo - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+}
+
+function shiftMonth(delta) {
+  const [y, mo] = viewMonth.split("-").map(Number);
+  const d = new Date(y, mo - 1 + delta, 1);
+  const next = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  if (next > currentMonthStr()) return; // no peeking into the future
+  viewMonth = next;
+  filter = "All"; // last month's filter rarely applies to this one
+  render();
+}
 
 const $ = s => document.querySelector(s);
 const fmt = n => "Rs " + Math.round(n).toLocaleString("en-PK");
@@ -315,7 +346,11 @@ async function push(method, payload) {
 
 /* ---------- render ---------- */
 function render() {
-  const list = filter === "All" ? items : items.filter(x => x.category === filter);
+  $("#mLabel").textContent = monthLabel(viewMonth);
+  $("#mNext").disabled = viewMonth >= currentMonthStr();
+
+  const monthItems = items.filter(x => (x.date || "").slice(0, 7) === viewMonth);
+  const list = filter === "All" ? monthItems : monthItems.filter(x => x.category === filter);
   const sorted = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.ts || 0) - (a.ts || 0));
 
   const total = list.reduce((s, x) => s + (+x.amount || 0), 0);
@@ -328,8 +363,8 @@ function render() {
   $("#sumE").textContent = fmt(byP[PEOPLE[0]] || 0);
   $("#sumQ").textContent = fmt(byP[PEOPLE[1]] || 0);
 
-  // filters
-  const used = ["All", ...CATEGORIES.filter(c => items.some(x => x.category === c))];
+  // filters (only categories actually used this month)
+  const used = ["All", ...CATEGORIES.filter(c => monthItems.some(x => x.category === c))];
   $("#filters").innerHTML = used.map(c =>
     `<button class="f${c === filter ? " on" : ""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
 
@@ -385,7 +420,7 @@ function openSheet(x) {
   $("#fAmount").value = x ? x.amount : "";
   $("#fItem").value   = x ? (x.item || "") : "";
   $("#fNote").value   = x ? (x.note || "") : "";
-  $("#fDate").value   = x ? (x.date || todayStr()) : todayStr();
+  $("#fDate").value   = x ? (x.date || todayStr()) : (viewMonth === currentMonthStr() ? todayStr() : viewMonth + "-01");
   who = x ? (x.payer || PEOPLE[0]) : PEOPLE[0];
   cat = x ? (x.category || CATEGORIES[0]) : CATEGORIES[0];
   $("#err").textContent = "";
@@ -403,6 +438,9 @@ $("#backdrop").onclick = e => { if (e.target.id === "backdrop") closeSheet(); };
 
 $("#fWho").onclick = e => { const b = e.target.closest("button"); if (b) { who = b.dataset.w; paint(); } };
 $("#fCat").onclick = e => { const b = e.target.closest("button"); if (b) { cat = b.dataset.c; paint(); } };
+
+$("#mPrev").onclick = () => shiftMonth(-1);
+$("#mNext").onclick = () => shiftMonth(1);
 
 $("#filters").onclick = e => { const b = e.target.closest(".f"); if (b) { filter = b.dataset.c; render(); } };
 $("#list").onclick = e => {
