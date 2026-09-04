@@ -31,7 +31,12 @@
 const INGEST_URL = "https://inandout-ten.vercel.app/api/ingest";
 const INGEST_SECRET = "PASTE_THE_SAME_VALUE_AS_VERCEL_INGEST_SECRET";
 
-const QUERY = "label:Banking -label:Logged";
+// after: bounds this permanently, on every run (manual or scheduled) — without
+// it, the very first run treats your ENTIRE Banking-labelled history as
+// unprocessed (nothing was "Logged" yet), backfilling months of old real
+// transactions in one go. Move this date forward if you ever want to skip
+// past even more old mail; it never needs to move backward.
+const QUERY = "label:Banking -label:Logged after:2026/09/01";
 const DONE_LABEL = "Logged";
 
 function forwardBankAlerts() {
