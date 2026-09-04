@@ -81,14 +81,18 @@ function parseMeezan(subject, body) {
 function parseHabibMetro(subject, body) {
   if (!/HabibMetro Fund Transfer/i.test(subject)) return null;
 
+  // HabibMetro's plain-text body wraps key values in literal *asterisks* (kept
+  // bold markdown) and hard-wraps mid-phrase (e.g. "from" and "your" split
+  // across a line break) — normalize before matching against either shape.
+  const flat = body.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+
   // Detailed form:
-  //   "PKR 100000.000 has been sent to NAME from your HMB Account *0677.
-  //    Transaction ID: MPBL...
-  //    Date & Time: 2026-09-03 14:03:35.44"
-  let m = body.match(/PKR\s*([\d,]+\.?\d*)\s+has been sent to\s+([^\n]+?)\s+from your HMB Account/i);
+  //   "... PKR 100000.000 has been sent to NAME Meezan Bank from your HMB
+  //    Account *0677. Transaction ID: MPBL... Date & Time: 2026-09-03 14:03:35.44 ..."
+  let m = flat.match(/PKR\s*([\d,]+\.?\d*)\s+has been sent to\s+(.+?)\s+from your HMB Account/i);
   if (m) {
-    const txid = (body.match(/Transaction ID:\s*(\S+)/i) || [])[1] || "";
-    const dt = body.match(/Date\s*&\s*Time:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/i);
+    const txid = (flat.match(/Transaction ID:\s*(\S+)/i) || [])[1] || "";
+    const dt = flat.match(/Date\s*&\s*Time:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/i);
     return {
       skip: false,
       amount: parseFloat(m[1].replace(/,/g, "")),
@@ -101,7 +105,7 @@ function parseHabibMetro(subject, body) {
 
   // Short form:
   //   "PKR 900.00 sent to NAME from your HMB A/C *0677 on 02-Sep-2026 15:11 via RAAST Tx ID MPBL..."
-  m = body.match(/PKR\s*([\d,]+\.?\d*)\s+sent to\s+([^\n]+?)\s+from your HMB A\/C[^\n]*?\bon\s+(\d{2})-([A-Za-z]{3})-(\d{4})\s+(\d{2}:\d{2})\s+via RAAST Tx ID\s+(\S+)/i);
+  m = flat.match(/PKR\s*([\d,]+\.?\d*)\s+sent to\s+(.+?)\s+from your HMB A\/C.*?\bon\s+(\d{2})-([A-Za-z]{3})-(\d{4})\s+(\d{2}:\d{2})\s+via RAAST Tx ID\s+(\S+)/i);
   if (m) {
     return {
       skip: false,
@@ -116,15 +120,17 @@ function parseHabibMetro(subject, body) {
   return { skip: true, retry: true, reason: "HabibMetro Fund Transfer but body format not recognized" };
 }
 
-// App login / session notifications aren't transactions — ignore permanently
-// rather than retrying forever. Matches "Login Alert", "Log In Alert", "| Login".
-function isLoginNotice(subject) {
-  return /log\s?in/i.test(subject || "");
+// App login / session / OTP notifications aren't transactions — ignore
+// permanently rather than retrying forever. Matches "Login Alert", "Log In
+// Alert", "| Login", "One-Time password to confirm your operation", etc.
+const NOISE_SUBJECT_PATTERNS = [/log\s?in/i, /one-time password/i, /\botp\b/i];
+function isNoiseSubject(subject) {
+  return NOISE_SUBJECT_PATTERNS.some(re => re.test(subject || ""));
 }
 
 function parseBankEmail(subject, body) {
-  if (isLoginNotice(subject)) {
-    return { skip: true, retry: false, reason: "login/session notification, not a transaction" };
+  if (isNoiseSubject(subject)) {
+    return { skip: true, retry: false, reason: "login/OTP/session notification, not a transaction" };
   }
   return (
     parseMeezan(subject, body) ||
