@@ -113,6 +113,19 @@
   .ramt{font-weight:650;font-size:15px;white-space:nowrap}
   .empty{text-align:center;color:var(--dim);padding:60px 20px;font-size:14px}
 
+  /* ---- pending (auto-detected bank transactions) ---- */
+  .pendingBox{margin-top:16px}
+  .pendlab{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin-bottom:7px}
+  .pend{
+    background:var(--card2);border:1px solid var(--accent);border-radius:14px;
+    padding:11px 13px;margin-bottom:8px;display:flex;gap:10px;align-items:center;justify-content:space-between
+  }
+  .pendmain{flex:1;min-width:0}
+  .pendbtns{display:flex;gap:6px;flex:0 0 auto}
+  .pbtn{border:0;border-radius:10px;padding:9px 12px;font-size:13px;font-weight:650;cursor:pointer}
+  .pbtn.add{background:var(--accent);color:#fff}
+  .pbtn.skip{background:transparent;color:var(--dim);border:1px solid var(--line);padding:9px 11px}
+
   /* ---- fab ---- */
   .fab{
     position:fixed;left:50%;transform:translateX(-50%);
@@ -214,6 +227,7 @@
 </header>
 
 <div class="wrap">
+  <div class="pendingBox" id="pendingBox" style="display:none"></div>
   <div class="filters" id="filters"></div>
   <div id="list"></div>
   <div class="foot">Pull to refresh · syncs automatically every 8s</div>
@@ -265,12 +279,15 @@ const PEOPLE   = ["Ebrahim", "Qadr"];
 const CATEGORIES = ["Groceries","Utilities","Rent","Home","Eating out","Transport","Health","Help/Staff","Other"];
 const PIN = "0101";                   // must match APP_PIN env var on Vercel
 const API = "/api/expenses";          // Vercel serverless fn -> Upstash Redis
+const PENDING_API = "/api/pending";   // auto-detected bank transactions awaiting review
 const POLL_MS = 8000;
 
 /* ============================================================ */
 let items = [];        // {id, amount, item, payer, category, date, note, ts}
+let pending = [];      // {id, amount, date, recipient, subject, ts} — awaiting confirm/discard
 let filter = "All";
 let editingId = null;
+let editingPendingId = null;
 let online = true;
 let viewMonth = currentMonthStr();   // "YYYY-MM" — month currently on screen
 
@@ -310,6 +327,72 @@ async function api(method, body) {
   if (r.status === 401) { lock(); throw new Error("bad pin"); }
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
+}
+
+async function apiPending(method, body) {
+  const r = await fetch(PENDING_API, {
+    method,
+    headers: { "Content-Type": "application/json", "x-pin": PIN },
+    body: body ? JSON.stringify(body) : undefined,
+    cache: "no-store"
+  });
+  if (r.status === 401) { lock(); throw new Error("bad pin"); }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+async function loadPending() {
+  try {
+    const data = await apiPending("GET");
+    pending = Array.isArray(data) ? data : [];
+  } catch { /* keep whatever we last had; will retry on next poll */ }
+  renderPending();
+}
+
+function renderPending() {
+  const box = $("#pendingBox");
+  if (!pending.length) { box.style.display = "none"; box.innerHTML = ""; return; }
+  box.style.display = "block";
+  box.innerHTML = `<div class="pendlab">New from bank (${pending.length})</div>` +
+    pending.map(p => `
+      <div class="pend" data-id="${esc(p.id)}">
+        <div class="pendmain">
+          <div class="ritem">${fmt(p.amount)} to ${esc(p.recipient || "unknown")}</div>
+          <div class="rmeta">${esc(prettyDate(p.date))}</div>
+        </div>
+        <div class="pendbtns">
+          <button type="button" class="pbtn add" data-act="add">Review</button>
+          <button type="button" class="pbtn skip" data-act="skip">✕</button>
+        </div>
+      </div>`).join("");
+}
+
+function openPendingSheet(p) {
+  editingId = null;
+  editingPendingId = p.id;
+  $("#sheetTitle").textContent = "Confirm transaction";
+  $("#btnDelete").style.display = "none";
+  $("#fAmount").value = p.amount;
+  $("#fItem").value   = p.recipient || "";
+  $("#fNote").value   = "";
+  $("#fDate").value   = p.date || todayStr();
+  who = PEOPLE[0]; cat = CATEGORIES[0];
+  $("#err").textContent = "";
+  paint();
+  $("#backdrop").classList.add("open");
+}
+
+async function confirmPending(payload, pendingId) {
+  items.push(payload); cacheSet(items); render();
+  pending = pending.filter(p => p.id !== pendingId); renderPending();
+  try { await apiPending("POST", payload); load(true); }
+  catch { /* left in items locally; will resync on next load/poll */ }
+}
+
+async function discardPending(id) {
+  pending = pending.filter(p => p.id !== id);
+  renderPending();
+  try { await apiPending("DELETE", { id }); } catch { /* will reappear on next loadPending if it failed */ }
 }
 
 function setStatus(ok, txt) {
@@ -415,6 +498,7 @@ function paint() {
 
 function openSheet(x) {
   editingId = x ? x.id : null;
+  editingPendingId = null;
   $("#sheetTitle").textContent = x ? "Edit expense" : "Add expense";
   $("#btnDelete").style.display = x ? "block" : "none";
   $("#fAmount").value = x ? x.amount : "";
@@ -448,18 +532,36 @@ $("#list").onclick = e => {
   if (r) { const x = items.find(i => i.id === r.dataset.id); if (x) openSheet(x); }
 };
 
+$("#pendingBox").onclick = e => {
+  const row = e.target.closest(".pend");
+  if (!row) return;
+  const p = pending.find(x => x.id === row.dataset.id);
+  if (!p) return;
+  const act = e.target.closest("button")?.dataset.act;
+  if (act === "add") openPendingSheet(p);
+  else if (act === "skip") discardPending(p.id);
+};
+
 $("#btnSave").onclick = () => {
   const amount = parseFloat($("#fAmount").value);
   const item = $("#fItem").value.trim();
   if (!(amount > 0)) return ($("#err").textContent = "Enter an amount greater than 0.");
   if (!item)         return ($("#err").textContent = "Add a short description.");
-  push("POST", {
-    id: editingId || uid(),
+
+  const payload = {
+    id: editingPendingId || editingId || uid(),
     amount, item, payer: who, category: cat,
     date: $("#fDate").value || todayStr(),
     note: $("#fNote").value.trim(),
     ts: Date.now()
-  });
+  };
+
+  if (editingPendingId) {
+    confirmPending(payload, editingPendingId);
+    editingPendingId = null;
+  } else {
+    push("POST", payload);
+  }
   closeSheet();
 };
 
@@ -503,8 +605,9 @@ function unlock() {
   items = cacheGet();
   render();
   load();
-  setInterval(() => { if (!$("#backdrop").classList.contains("open")) load(true); }, POLL_MS);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(true); });
+  loadPending();
+  setInterval(() => { if (!$("#backdrop").classList.contains("open")) { load(true); loadPending(); } }, POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { load(true); loadPending(); } });
 }
 
 function lock() {

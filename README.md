@@ -7,9 +7,12 @@ Shared joint expense logbook for Ebrahim & Qadr — one running record of what t
 ## Files
 
 ```
-index.html          # the whole app (UI + logic)
-api/expenses.js     # Vercel serverless fn -> Upstash Redis
-package.json        # only exists so Vercel treats api/*.js as ESM
+index.html            # the whole app (UI + logic)
+api/expenses.js       # Vercel serverless fn -> Upstash Redis
+api/ingest.js         # receives forwarded bank alert emails -> "pending" queue
+api/pending.js        # app reads/confirms/discards the pending queue
+gas/bank-forwarder.gs # Gmail Apps Script that forwards bank alerts to api/ingest.js
+package.json          # only exists so Vercel treats api/*.js as ESM
 ```
 
 ## Setup (~5 minutes)
@@ -70,6 +73,37 @@ To change it, edit the `PIN` constant in `index.html` **and** set `APP_PIN` to t
 
 This is a convenience lock, not real security — the PIN is visible in the page source to anyone determined enough. Fine for keeping a household logbook private from casual eyes.
 
+## Auto-import from bank alerts (optional)
+
+Bank debit-alert emails can be auto-forwarded into the app as a "pending" queue —
+they never post straight into your real expenses, you just confirm or discard
+each one from a card that appears when you open the app.
+
+**1. Vercel**
+
+- Settings → Environment Variables → add `INGEST_SECRET` (any long random string —
+  this guards `/api/ingest`, it's separate from the app PIN). Redeploy after adding it.
+
+**2. Gmail**
+
+- Open `gas/bank-forwarder.gs` in this repo, go to https://script.google.com → New
+  project, and paste its contents in.
+- Fill in `INGEST_SECRET` in the script to match the Vercel value exactly.
+- Run `forwardBankAlerts` once and grant Gmail access when prompted.
+- Triggers (clock icon, left sidebar) → Add Trigger → `forwardBankAlerts`,
+  time-driven, every 5 minutes.
+
+New debit alerts get parsed (amount, date, recipient) and show up in the app under
+**"New from bank"** within a few minutes. Tap **Review** to fill in who paid and
+the category (amount/date are pre-filled, both editable) and save it as a real
+expense, or **✕** to discard ones that aren't house expenses (transfers, etc).
+Credit/"received" alerts are ignored — only money going out counts.
+
+The parser in `api/ingest.js` is written against Meezan Bank's current alert
+wording (`PKR X sent ...`, `Transaction Date`, `Transaction Time`, `Beneficiary
+Account`/`sent to ...`). If the bank changes its email template, or you're on a
+different bank, that regex will need adjusting.
+
 ## Reset everything
 
-In the Upstash console → Data Browser → delete the `expenses` key.
+In the Upstash console → Data Browser → delete the `expenses` key (and `inandout:pending` if you're using bank auto-import).
