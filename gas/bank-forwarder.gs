@@ -59,7 +59,10 @@ function forwardBankAlerts() {
         }
         const json = JSON.parse(resp.getContentText() || "{}");
         if (json.skipped && json.retry) {
-          Logger.log("not handled yet, will retry later: %s", json.reason);
+          Logger.log(
+            "not handled yet, will retry later: %s | from: %s | subject: %s",
+            json.reason, msg.getFrom(), msg.getSubject()
+          );
           shouldLabel = false;
         }
       } catch (e) {
