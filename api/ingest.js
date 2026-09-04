@@ -74,6 +74,32 @@ function parseMeezan(subject, body) {
   };
 }
 
+// Meezan foreign card purchases (subject differs from the domestic debit alert).
+// Uses "PKR Amount" (the converted total before extra fees) rather than
+// "Original Transaction Amount" (pre-conversion, in the original currency's PKR
+// equivalent) — close enough for a household tracker; the international fee
+// components on top of it are small and editable by hand during review anyway.
+function parseMeezanIntl(subject, body) {
+  if (!/International E-Commerce Transaction Alert/i.test(subject)) return null;
+
+  const flat = body.replace(/\s+/g, " ").trim();
+  const dtM = flat.match(/Transaction Date Time:\s*(\d{2})-([A-Za-z]{3})-(\d{4})\s+(\d{2}:\d{2})/i);
+  const merchM = flat.match(/Merchant Name\/Country:\s*(.+?)\s+Original Transaction Amount:/i);
+  const amtM = flat.match(/PKR Amount:\s*PKR\s*([\d,]+\.\d{2})/i);
+
+  if (!dtM || !amtM) {
+    return { skip: true, retry: true, reason: "International E-Commerce alert but body format not recognized" };
+  }
+
+  return {
+    skip: false,
+    amount: parseFloat(amtM[1].replace(/,/g, "")),
+    date: `${dtM[3]}-${MONTHS[dtM[2]] || "01"}-${dtM[1]}`,
+    time: dtM[4],
+    recipient: merchM ? merchM[1].trim() : "",
+  };
+}
+
 // HabibMetro sends TWO emails per transaction, both subject "HabibMetro Fund
 // Transfer" — a short SMS-style one and a detailed one — but both carry the same
 // Tx ID / Transaction ID, which we use as the dedup key (see makeId) so they
@@ -135,6 +161,59 @@ function parseHabibMetro(subject, body) {
   return { skip: true, retry: true, reason: "HabibMetro Fund Transfer but body format not recognized" };
 }
 
+// HabibMetro's IBFT rail sends the transfer confirmation under a DIFFERENT
+// subject ("Fund Transfer Acknowledgement") than the "HabibMetro Fund Transfer"
+// email for the same transfer, and neither shares an id with the other — so an
+// IBFT transfer will show up as two separate pending items. Discard whichever
+// duplicate shows up second; not worth the complexity of correlating them.
+function parseHabibMetroAck(subject, body) {
+  if (!/Fund Transfer Acknowledgement/i.test(subject)) return null;
+
+  const flat = body.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+  const amtM = flat.match(/Amount Transferred\s*:\s*PKR\s*([\d,]+\.?\d*)/i);
+  const dtM = flat.match(/Date\s*&\s*Time\s*:\s*([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})\s+(\d{2}:\d{2})/i);
+  const toM = flat.match(/To Account Title\s*:\s*(.+?)\s+Thank you/i);
+  const reqM = flat.match(/Request#\s*:\s*(\S+)/i);
+
+  if (!amtM || !dtM) {
+    return { skip: true, retry: true, reason: "Fund Transfer Acknowledgement but body format not recognized" };
+  }
+
+  return {
+    skip: false,
+    amount: parseFloat(amtM[1].replace(/,/g, "")),
+    date: `${dtM[3]}-${MONTHS[dtM[1]] || "01"}-${String(dtM[2]).padStart(2, "0")}`,
+    time: dtM[4],
+    recipient: toM ? toM[1].trim() : "",
+    txid: reqM ? `hmreq:${reqM[1]}` : "",
+  };
+}
+
+// HBL credit card BILL payments (paying off the card balance through the app),
+// not individual card purchases. If HBL also alerts on each purchase
+// separately, logging this too would double-count — no such alert seen yet,
+// so it's wired up; discard it during review if it turns out to be a dupe.
+function parseHBL(subject, body) {
+  if (!/HBL Mobile\s*\|\s*Credit Card Payment/i.test(subject)) return null;
+
+  const flat = body.replace(/\s+/g, " ").trim();
+  const m = flat.match(/CreditCard Bill Payment of PKR\s*([\d,]+\.?\d*)\s+for Card #\s*(\S+)\s+has been made successfully through HBL Mobile on\s+(\d{2})-([A-Za-z]{3})-(\d{4})\s+(\d{2}:\d{2})/i);
+
+  if (!m) {
+    return { skip: true, retry: true, reason: "HBL Credit Card Payment but body format not recognized" };
+  }
+
+  const last4 = (m[2].match(/(\d{4})$/) || [])[1] || m[2];
+  return {
+    skip: false,
+    amount: parseFloat(m[1].replace(/,/g, "")),
+    date: `${m[5]}-${MONTHS[m[4]] || "01"}-${m[3]}`,
+    time: m[6],
+    recipient: `HBL Credit Card Bill (••${last4})`,
+    txid: "",
+  };
+}
+
 // Login / session / OTP / account-management notifications aren't
 // transactions — ignore permanently rather than retrying forever. Matches
 // "Login Alert", "Log In Alert", "| Login", "One-Time password to confirm
@@ -150,7 +229,10 @@ function parseBankEmail(subject, body) {
   }
   return (
     parseMeezan(subject, body) ||
+    parseMeezanIntl(subject, body) ||
     parseHabibMetro(subject, body) ||
+    parseHabibMetroAck(subject, body) ||
+    parseHBL(subject, body) ||
     { skip: true, retry: true, reason: "unrecognized sender/subject" }
   );
 }

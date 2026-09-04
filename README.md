@@ -110,11 +110,22 @@ yet is deliberately left unlabelled instead — it'll keep showing up in the sea
 silently disappearing.
 
 **Banks currently parsed:**
-- **Meezan Bank** — subject `Debit Transaction Alert` / `Credit Transaction Alert`.
-- **HabibMetro** — subject `HabibMetro Fund Transfer`. HabibMetro sends two
-  emails per transfer (a short one and a detailed one); both carry the same
-  Transaction ID, which `api/ingest.js` uses to collapse them into a single
-  pending item instead of showing the same transfer twice.
+- **Meezan Bank** — domestic debit/credit alerts (`Debit Transaction Alert` /
+  `Credit Transaction Alert`) and foreign card purchases
+  (`International E-Commerce Transaction Alert`).
+- **HabibMetro** — RAAST transfers (`HabibMetro Fund Transfer`, sent as two
+  emails sharing one Transaction ID, collapsed into a single pending item) and
+  IBFT transfers (`HabibMetro Fund Transfer` + a separate
+  `Fund Transfer Acknowledgement` email for the *same* transfer — these two
+  don't share an id, so an IBFT transfer currently shows up as **two** pending
+  cards; just discard the duplicate).
+- **HBL** — credit card bill payments (`HBL Mobile | Credit Card Payment`).
+  This is the bill payment, not individual card purchases — if HBL ever starts
+  alerting on those separately too, logging both would double-count.
+
+**Permanently ignored** (not transactions, never queued): login/session
+alerts, OTP emails, and payee add/delete notifications, across all of the
+above banks.
 
 If a bank changes its email wording, or you add another bank, the fix is in
 `api/ingest.js` — add a new `parseX(subject, body)` function following the same
