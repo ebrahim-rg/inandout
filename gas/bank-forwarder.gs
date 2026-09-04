@@ -63,12 +63,10 @@ function forwardBankAlerts() {
             "not handled yet, will retry later: %s | from: %s | subject: %s",
             json.reason, msg.getFrom(), msg.getSubject()
           );
-          // a recognized sender whose body format we don't handle yet (as opposed
-          // to a totally unknown sender/subject) — log a snippet so the parser can
-          // be extended without needing another manual copy-paste of the email
-          if (json.reason && json.reason.indexOf("unrecognized sender/subject") === -1) {
-            Logger.log("body snippet: %s", payload.body.slice(0, 500));
-          }
+          // always log a snippet for anything not yet handled, so a brand new
+          // subject/format from a bank shows its own body here on the next run
+          // instead of needing another manual copy-paste from the user
+          Logger.log("body snippet: %s", payload.body.slice(0, 500));
           shouldLabel = false;
         }
       } catch (e) {

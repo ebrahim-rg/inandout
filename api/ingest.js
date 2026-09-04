@@ -117,13 +117,29 @@ function parseHabibMetro(subject, body) {
     };
   }
 
+  // IBFT form (no beneficiary name, just account number + title):
+  //   "Funds of PKR 3000.000 have been transferred to A/C 6-99-3-29308-714-131228
+  //    (Title:UNSA ARIF) on 2026-08-25 15:08:02.217. via IBFT"
+  m = flat.match(/Funds of PKR\s*([\d,]+\.?\d*)\s+have been transferred to\s+A\/C\s+([\d-]+)\s*\(Title:\s*([^)]+)\)\s+on\s+(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/i);
+  if (m) {
+    return {
+      skip: false,
+      amount: parseFloat(m[1].replace(/,/g, "")),
+      date: `${m[4]}-${m[5]}-${m[6]}`,
+      time: m[7],
+      recipient: `${m[3].trim()} (A/C ${m[2]})`,
+      txid: "", // not present in this alert — falls back to date|time|amount|recipient dedup key
+    };
+  }
+
   return { skip: true, retry: true, reason: "HabibMetro Fund Transfer but body format not recognized" };
 }
 
-// App login / session / OTP notifications aren't transactions — ignore
-// permanently rather than retrying forever. Matches "Login Alert", "Log In
-// Alert", "| Login", "One-Time password to confirm your operation", etc.
-const NOISE_SUBJECT_PATTERNS = [/log\s?in/i, /one-time password/i, /\botp\b/i];
+// Login / session / OTP / account-management notifications aren't
+// transactions — ignore permanently rather than retrying forever. Matches
+// "Login Alert", "Log In Alert", "| Login", "One-Time password to confirm
+// your operation", "Domestic Payee Deletion Alert", etc.
+const NOISE_SUBJECT_PATTERNS = [/log\s?in/i, /one-time password/i, /\botp\b/i, /payee (addition|deletion)/i];
 function isNoiseSubject(subject) {
   return NOISE_SUBJECT_PATTERNS.some(re => re.test(subject || ""));
 }
