@@ -359,9 +359,10 @@ async function loadPending() {
   try {
     const data = await apiPending("GET");
     pending = Array.isArray(data) ? data : [];
-    // Redis HGETALL doesn't guarantee stable ordering between calls — sort so
-    // the list doesn't visibly reshuffle under you on every 8s poll
-    pending.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    // Redis HGETALL doesn't guarantee stable ordering between calls, so sort
+    // explicitly — by transaction date (like the main list), not ingestion
+    // time, since an older transaction can get swept in after a newer one
+    pending.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.ts || 0) - (a.ts || 0));
   } catch { /* keep whatever we last had; will retry on next poll */ }
   renderPending();
 }
