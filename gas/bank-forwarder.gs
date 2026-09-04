@@ -19,13 +19,23 @@
  *   5. Done — new alerts get picked up within 5 minutes and show up in the
  *      app as "New from bank" for you to confirm or discard.
  *
- * Each processed email gets labelled "Logged" so it's not re-sent on the next
- * run — except a bank/format api/ingest.js doesn't recognize yet, which is
- * deliberately left unlabelled so it gets retried automatically once that
- * bank's parser is added, instead of silently getting lost. Unrecognized ones
- * also show up right in the app under "Couldn't read from bank" so you don't
- * have to check this script's execution log to notice — you can add them by
- * hand from there, or dismiss them.
+ * Per-message tracking, not per-thread: banks reuse identical subject lines
+ * for every alert, so Gmail's conversation view groups unrelated transactions
+ * to the same recipient into ONE growing thread over time. A Gmail LABEL can
+ * only be applied to a whole thread — so if we used "-label:Logged" in the
+ * search (like an earlier version of this script did), a brand new message
+ * appended to an already-labelled thread would be silently invisible to every
+ * future run. Instead, which individual MESSAGES have already been sent to
+ * api/ingest is tracked in PropertiesService (a small persistent store tied to
+ * this script), keyed by each message's own id — independent of thread state.
+ * The "Logged" label is still applied when every message in a thread is done,
+ * but purely as a visual marker in Gmail; it plays no part in the skip logic.
+ *
+ * Unrecognized formats are deliberately left unmarked-processed so they're
+ * retried automatically once that bank's parser is added, instead of being
+ * silently lost. They also show up right in the app under "Couldn't read from
+ * bank" so you don't have to check this script's execution log to notice —
+ * you can add them by hand from there, or dismiss them.
  */
 
 const INGEST_URL = "https://inandout-ten.vercel.app/api/ingest";
@@ -33,21 +43,41 @@ const INGEST_SECRET = "PASTE_THE_SAME_VALUE_AS_VERCEL_INGEST_SECRET";
 
 // after: bounds this permanently, on every run (manual or scheduled) — without
 // it, the very first run treats your ENTIRE Banking-labelled history as
-// unprocessed (nothing was "Logged" yet), backfilling months of old real
-// transactions in one go. Move this date forward if you ever want to skip
-// past even more old mail; it never needs to move backward.
-const QUERY = "label:Banking -label:Logged after:2026/09/01";
-const DONE_LABEL = "Logged";
+// unprocessed, backfilling months of old real transactions in one go. Move
+// this date forward if you ever want to skip past even more old mail; it
+// never needs to move backward.
+const QUERY = "label:Banking after:2026/09/01";
+const DONE_LABEL = "Logged"; // cosmetic only now — see note above
+const PROCESSED_PROP = "processedMessageIds";
+const KEEP_DAYS = 180; // prune tracking older than this so it doesn't grow forever
+
+function loadProcessed() {
+  const raw = PropertiesService.getScriptProperties().getProperty(PROCESSED_PROP);
+  return raw ? JSON.parse(raw) : {}; // { messageId: isoDateString }
+}
+
+function saveProcessed(map) {
+  const cutoff = Date.now() - KEEP_DAYS * 86400000;
+  const pruned = {};
+  for (const id in map) {
+    if (new Date(map[id]).getTime() >= cutoff) pruned[id] = map[id];
+  }
+  PropertiesService.getScriptProperties().setProperty(PROCESSED_PROP, JSON.stringify(pruned));
+}
 
 function forwardBankAlerts() {
   const label = GmailApp.getUserLabelByName(DONE_LABEL) || GmailApp.createLabel(DONE_LABEL);
+  const processed = loadProcessed();
   const threads = GmailApp.search(QUERY, 0, 20);
 
   threads.forEach(thread => {
     const messages = thread.getMessages();
-    let shouldLabel = true; // false = leave unlabelled so it's retried next run
+    let allDone = true;
 
     messages.forEach(msg => {
+      const id = msg.getId();
+      if (processed[id]) return; // this specific message was already handled
+
       const payload = {
         subject: msg.getSubject(),
         body: msg.getPlainBody(),
@@ -63,7 +93,7 @@ function forwardBankAlerts() {
         });
         if (resp.getResponseCode() >= 300) {
           Logger.log("ingest failed (%s): %s", resp.getResponseCode(), resp.getContentText());
-          shouldLabel = false;
+          allDone = false;
           return;
         }
         const json = JSON.parse(resp.getContentText() || "{}");
@@ -76,14 +106,20 @@ function forwardBankAlerts() {
           // subject/format from a bank shows its own body here on the next run
           // instead of needing another manual copy-paste from the user
           Logger.log("body snippet: %s", payload.body.slice(0, 500));
-          shouldLabel = false;
+          allDone = false;
+          return; // NOT marked processed — retried again next run
         }
+        // successfully queued, or permanently ignored by design (login/OTP/
+        // credit alert/etc) — this message is done either way
+        processed[id] = msg.getDate().toISOString();
       } catch (e) {
         Logger.log("ingest error: " + e);
-        shouldLabel = false;
+        allDone = false;
       }
     });
 
-    if (shouldLabel) thread.addLabel(label);
+    if (allDone) thread.addLabel(label);
   });
+
+  saveProcessed(processed);
 }

@@ -104,16 +104,23 @@ the category (amount/date are pre-filled, both editable) and save it as a real
 expense, or **✕** to discard ones that aren't house expenses (transfers, etc).
 Credit/"received" alerts are ignored — only money going out counts.
 
-Each email the script successfully forwards gets labelled **Logged** so it isn't
-re-sent next run. An email from a bank/format `api/ingest.js` doesn't recognize
-yet is deliberately left unlabelled instead — it'll keep showing up in the search
-(harmlessly re-checked each run) until that bank's parser is added, rather than
-silently disappearing. It also shows up in the app itself under **"Couldn't read
-from bank"** (amber, separate from the normal pending queue) with the subject,
-sender, and a snippet of the raw email — tap **Add manually** to open the normal
-add-expense sheet with that snippet dropped into the notes field so you can type
-in the amount/date yourself, or **✕** to dismiss it. Once a bank's format is
-added to the parser, that entry clears itself out automatically on the next run.
+Which individual **messages** have already been forwarded is tracked in the
+script's own storage (`PropertiesService`), not by the Gmail label — banks
+reuse identical subject lines for every alert, so Gmail groups unrelated
+transactions to the same recipient into one growing thread over time, and a
+label can only mark a whole thread, not a single message inside it. The
+**Logged** label you'll see in Gmail is just a visual "this thread has no
+unprocessed messages left" marker; it isn't what decides whether something
+gets (re-)sent. A message from a bank/format `api/ingest.js` doesn't recognize
+yet is deliberately left untracked instead — it'll keep showing up each run
+until that bank's parser is added, rather than silently disappearing. It also
+shows up in the app itself under **"Couldn't read from bank"** (amber,
+separate from the normal pending queue) with the subject, sender, and a
+snippet of the raw email — tap **Add manually** to open the normal
+add-expense sheet with that snippet dropped into the notes field so you can
+type in the amount/date yourself, or **✕** to dismiss it. Once a bank's format
+is added to the parser, that entry clears itself out automatically on the
+next run.
 
 **Banks currently parsed:**
 - **Meezan Bank** — domestic debit/credit alerts (`Debit Transaction Alert` /
