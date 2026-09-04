@@ -320,6 +320,7 @@ export default async function handler(req, res) {
       date: parsed.date,
       recipient: parsed.recipient,
       subject,
+      snippet: body.slice(0, 400), // raw email text, so "unknown" recipients are still checkable
       ts: Date.now(),
     };
 

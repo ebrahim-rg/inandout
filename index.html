@@ -391,7 +391,9 @@ function openPendingSheet(p) {
   $("#btnDelete").style.display = "none";
   $("#fAmount").value = p.amount;
   $("#fItem").value   = p.recipient || "";
-  $("#fNote").value   = "";
+  // recipient came back empty ("unknown") — drop the raw email text into notes
+  // so there's something to go on instead of guessing
+  $("#fNote").value   = p.recipient ? "" : (p.snippet || "");
   $("#fDate").value   = p.date || todayStr();
   who = PEOPLE[0]; cat = CATEGORIES[0];
   $("#err").textContent = "";
