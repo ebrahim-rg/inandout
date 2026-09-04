@@ -32,15 +32,27 @@ const MONTHS = {
   Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
 };
 
+// Each parser returns:
+//   null                          -> not this bank's format, try the next one
+//   { skip: true, retry, reason } -> recognized, but nothing to queue
+//       retry:false = by design (e.g. money received, not an expense) — Logged forever
+//       retry:true  = recognized sender but this parser doesn't handle it yet —
+//                      left unlabelled in Gmail so it's retried once handled
+//   { skip: false, amount, date, time, recipient } -> queue it
+
 // Meezan Bank debit alerts come in two body shapes:
 //   "...Beneficiary Account : NAME-CHANNEL-xxxBANK..."
 //   "...sent to NAME (ASAAN AC) (BANK AC on account..."
 // Only debit ("money sent") alerts are expenses — credit/received alerts are ignored.
-function parseBankEmail(subject, body) {
-  if (!/debit/i.test(subject || "")) return null;
+function parseMeezan(subject, body) {
+  const isDebit = /Debit Transaction Alert/i.test(subject);
+  const isCredit = /Credit Transaction Alert/i.test(subject);
+  if (!isDebit && !isCredit) return null;
+
+  if (isCredit) return { skip: true, retry: false, reason: "Meezan credit alert (money received, not an expense)" };
 
   const amountMatch = body.match(/PKR\s*([\d,]+\.\d{2})/i);
-  if (!amountMatch) return null;
+  if (!amountMatch) return { skip: true, retry: false, reason: "Meezan debit alert but no amount found" };
 
   const dateMatch = body.match(/Transaction Date\s*:\s*(\d{2})-([A-Za-z]{3})-(\d{4})/i);
   const timeMatch = body.match(/Transaction Time\s*:\s*(\d{2}:\d{2})/i);
@@ -54,11 +66,28 @@ function parseBankEmail(subject, body) {
   }
 
   return {
+    skip: false,
     amount: parseFloat(amountMatch[1].replace(/,/g, "")),
     date: dateMatch ? `${dateMatch[3]}-${MONTHS[dateMatch[2]] || "01"}-${dateMatch[1]}` : "",
     time: timeMatch ? timeMatch[1] : "",
     recipient,
   };
+}
+
+// HabibMetro's body format isn't wired up yet — needs a real (redacted) sample
+// email to know the field layout. Recognized but deliberately left unhandled so
+// the Apps Script keeps retrying it instead of marking it "Logged" and losing it.
+function parseHabibMetro(subject) {
+  if (!/HabibMetro Fund Transfer/i.test(subject)) return null;
+  return { skip: true, retry: true, reason: "HabibMetro parser not implemented yet" };
+}
+
+function parseBankEmail(subject, body) {
+  return (
+    parseMeezan(subject, body) ||
+    parseHabibMetro(subject, body) ||
+    { skip: true, retry: true, reason: "unrecognized sender/subject" }
+  );
 }
 
 // Deterministic id from the transaction's own fields, so re-forwarding the same
@@ -93,8 +122,8 @@ export default async function handler(req, res) {
     const body = String(b.body || "").slice(0, 5000);
 
     const parsed = parseBankEmail(subject, body);
-    if (!parsed || !parsed.amount) {
-      return res.status(200).json({ ok: true, skipped: true, reason: "not a debit alert or no amount found" });
+    if (parsed.skip) {
+      return res.status(200).json({ ok: true, skipped: true, retry: parsed.retry, reason: parsed.reason });
     }
 
     const id = makeId(parsed);

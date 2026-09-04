@@ -75,9 +75,12 @@ This is a convenience lock, not real security — the PIN is visible in the page
 
 ## Auto-import from bank alerts (optional)
 
-Bank debit-alert emails can be auto-forwarded into the app as a "pending" queue —
+Bank alert emails can be auto-forwarded into the app as a "pending" queue —
 they never post straight into your real expenses, you just confirm or discard
 each one from a card that appears when you open the app.
+
+**Scope**: the Gmail script only ever looks at emails already under your
+**Banking** label — nothing else in your inbox is searched or read.
 
 **1. Vercel**
 
@@ -86,6 +89,7 @@ each one from a card that appears when you open the app.
 
 **2. Gmail**
 
+- Make sure every bank alert email carries your **Banking** label (as they already do).
 - Open `gas/bank-forwarder.gs` in this repo, go to https://script.google.com → New
   project, and paste its contents in.
 - Fill in `INGEST_SECRET` in the script to match the Vercel value exactly.
@@ -99,10 +103,22 @@ the category (amount/date are pre-filled, both editable) and save it as a real
 expense, or **✕** to discard ones that aren't house expenses (transfers, etc).
 Credit/"received" alerts are ignored — only money going out counts.
 
-The parser in `api/ingest.js` is written against Meezan Bank's current alert
-wording (`PKR X sent ...`, `Transaction Date`, `Transaction Time`, `Beneficiary
-Account`/`sent to ...`). If the bank changes its email template, or you're on a
-different bank, that regex will need adjusting.
+Each email the script successfully forwards gets labelled **Logged** so it isn't
+re-sent next run. An email from a bank/format `api/ingest.js` doesn't recognize
+yet is deliberately left unlabelled instead — it'll keep showing up in the search
+(harmlessly re-checked each run) until that bank's parser is added, rather than
+silently disappearing.
+
+**Banks currently parsed:**
+- **Meezan Bank** — subject `Debit Transaction Alert` / `Credit Transaction Alert`.
+- **HabibMetro** — subject `HabibMetro Fund Transfer` is recognized but not yet
+  parsed (needs a redacted sample email to know its field layout — the
+  `parseHabibMetro` stub in `api/ingest.js` is where that goes).
+
+If a bank changes its email wording, or you add another bank, the fix is in
+`api/ingest.js` — add a new `parseX(subject, body)` function following the same
+`{skip, retry, reason}` / `{skip:false, amount, date, time, recipient}` shape as
+`parseMeezan`, and chain it into `parseBankEmail`.
 
 ## Reset everything
 

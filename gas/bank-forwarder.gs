@@ -1,7 +1,10 @@
 /*
- * Gmail Apps Script — forwards Meezan Bank debit-alert emails to the app's
- * /api/ingest endpoint, where they land in a "pending" queue for review inside
- * the app (never written straight into your real expense list).
+ * Gmail Apps Script — forwards bank alert emails to the app's /api/ingest
+ * endpoint, where they land in a "pending" queue for review inside the app
+ * (never written straight into your real expense list).
+ *
+ * Scope: only emails already under your "Banking" Gmail label are ever
+ * touched — nothing else in your inbox is read or searched.
  *
  * Setup:
  *   1. https://script.google.com -> New project -> paste this whole file in,
@@ -13,17 +16,20 @@
  *        Function: forwardBankAlerts
  *        Event source: Time-driven
  *        Type: Minutes timer, every 5 minutes
- *   5. Done — new debit alerts get picked up within 5 minutes and show up in
- *      the app as "New from bank" for you to confirm or discard.
+ *   5. Done — new alerts get picked up within 5 minutes and show up in the
+ *      app as "New from bank" for you to confirm or discard.
+ *
+ * Each processed email gets labelled "Logged" so it's not re-sent on the next
+ * run — except a bank/format api/ingest.js doesn't recognize yet, which is
+ * deliberately left unlabelled so it gets retried automatically once that
+ * bank's parser is added, instead of silently getting lost.
  */
 
 const INGEST_URL = "https://inandout-ten.vercel.app/api/ingest";
 const INGEST_SECRET = "PASTE_THE_SAME_VALUE_AS_VERCEL_INGEST_SECRET";
 
-// Narrow this further with e.g. 'from:(alerts@meezanbank.com)' once you've
-// confirmed the sender address (open a bank email -> ⋮ -> "Show original").
-const QUERY = 'subject:"Transaction Alert" -label:bank-forwarded';
-const DONE_LABEL = "bank-forwarded";
+const QUERY = "label:Banking -label:Logged";
+const DONE_LABEL = "Logged";
 
 function forwardBankAlerts() {
   const label = GmailApp.getUserLabelByName(DONE_LABEL) || GmailApp.createLabel(DONE_LABEL);
@@ -31,7 +37,7 @@ function forwardBankAlerts() {
 
   threads.forEach(thread => {
     const messages = thread.getMessages();
-    let allOk = true;
+    let shouldLabel = true; // false = leave unlabelled so it's retried next run
 
     messages.forEach(msg => {
       const payload = {
@@ -48,16 +54,20 @@ function forwardBankAlerts() {
         });
         if (resp.getResponseCode() >= 300) {
           Logger.log("ingest failed (%s): %s", resp.getResponseCode(), resp.getContentText());
-          allOk = false;
+          shouldLabel = false;
+          return;
+        }
+        const json = JSON.parse(resp.getContentText() || "{}");
+        if (json.skipped && json.retry) {
+          Logger.log("not handled yet, will retry later: %s", json.reason);
+          shouldLabel = false;
         }
       } catch (e) {
         Logger.log("ingest error: " + e);
-        allOk = false;
+        shouldLabel = false;
       }
     });
 
-    // only mark done if every message in the thread posted successfully,
-    // so a transient failure gets retried on the next run instead of being lost
-    if (allOk) thread.addLabel(label);
+    if (shouldLabel) thread.addLabel(label);
   });
 }
