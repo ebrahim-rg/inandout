@@ -9,8 +9,9 @@ Shared joint expense logbook for Ebrahim & Qadr — one running record of what t
 ```
 index.html            # the whole app (UI + logic)
 api/expenses.js       # Vercel serverless fn -> Upstash Redis
-api/ingest.js         # receives forwarded bank alert emails -> "pending" queue
+api/ingest.js         # receives forwarded bank alert emails -> "pending"/"unparsed" queues
 api/pending.js        # app reads/confirms/discards the pending queue
+api/unparsed.js       # app reads/dismisses emails the parser couldn't understand
 gas/bank-forwarder.gs # Gmail Apps Script that forwards bank alerts to api/ingest.js
 package.json          # only exists so Vercel treats api/*.js as ESM
 ```
@@ -107,7 +108,12 @@ Each email the script successfully forwards gets labelled **Logged** so it isn't
 re-sent next run. An email from a bank/format `api/ingest.js` doesn't recognize
 yet is deliberately left unlabelled instead — it'll keep showing up in the search
 (harmlessly re-checked each run) until that bank's parser is added, rather than
-silently disappearing.
+silently disappearing. It also shows up in the app itself under **"Couldn't read
+from bank"** (amber, separate from the normal pending queue) with the subject,
+sender, and a snippet of the raw email — tap **Add manually** to open the normal
+add-expense sheet with that snippet dropped into the notes field so you can type
+in the amount/date yourself, or **✕** to dismiss it. Once a bank's format is
+added to the parser, that entry clears itself out automatically on the next run.
 
 **Banks currently parsed:**
 - **Meezan Bank** — domestic debit/credit alerts (`Debit Transaction Alert` /

@@ -11,6 +11,7 @@
   :root{
     --bg:#0f1115; --card:#171a21; --card2:#1e222b; --line:#282d38;
     --txt:#e9ecf1; --dim:#8b93a3; --accent:#5b8cff; --good:#3ecf8e; --bad:#ff6b6b;
+    --warn:#e0a940;
     --e:#5b8cff; --q:#c084fc;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -126,6 +127,15 @@
   .pbtn.add{background:var(--accent);color:#fff}
   .pbtn.skip{background:transparent;color:var(--dim);border:1px solid var(--line);padding:9px 11px}
 
+  /* ---- unparsed (bank emails the parser couldn't understand) ---- */
+  .unparsedBox{margin-top:16px}
+  .unparsed{
+    background:var(--card2);border:1px solid var(--warn);border-radius:14px;
+    padding:11px 13px;margin-bottom:8px;display:flex;gap:10px;align-items:center;justify-content:space-between
+  }
+  .unparsed .ritem{color:var(--warn)}
+  .pbtn.add.warn{background:var(--warn);color:#1a1204}
+
   /* ---- fab ---- */
   .fab{
     position:fixed;left:50%;transform:translateX(-50%);
@@ -228,6 +238,7 @@
 
 <div class="wrap">
   <div class="pendingBox" id="pendingBox" style="display:none"></div>
+  <div class="unparsedBox" id="unparsedBox" style="display:none"></div>
   <div class="filters" id="filters"></div>
   <div id="list"></div>
   <div class="foot">Pull to refresh · syncs automatically every 8s</div>
@@ -279,15 +290,18 @@ const PEOPLE   = ["Ebrahim", "Qadr"];
 const CATEGORIES = ["Groceries","Utilities","Rent","Home","Eating out","Transport","Health","Help/Staff","Other"];
 const PIN = "0101";                   // must match APP_PIN env var on Vercel
 const API = "/api/expenses";          // Vercel serverless fn -> Upstash Redis
-const PENDING_API = "/api/pending";   // auto-detected bank transactions awaiting review
+const PENDING_API = "/api/pending";     // auto-detected bank transactions awaiting review
+const UNPARSED_API = "/api/unparsed";   // bank emails the parser couldn't understand at all
 const POLL_MS = 8000;
 
 /* ============================================================ */
 let items = [];        // {id, amount, item, payer, category, date, note, ts}
 let pending = [];      // {id, amount, date, recipient, subject, ts} — awaiting confirm/discard
+let unparsed = [];     // {id, subject, from, snippet, reason, ts} — parser gave up, add manually or dismiss
 let filter = "All";
 let editingId = null;
 let editingPendingId = null;
+let editingUnparsedId = null;
 let online = true;
 let viewMonth = currentMonthStr();   // "YYYY-MM" — month currently on screen
 
@@ -395,6 +409,66 @@ async function discardPending(id) {
   try { await apiPending("DELETE", { id }); } catch { /* will reappear on next loadPending if it failed */ }
 }
 
+async function apiUnparsed(method, body) {
+  const r = await fetch(UNPARSED_API, {
+    method,
+    headers: { "Content-Type": "application/json", "x-pin": PIN },
+    body: body ? JSON.stringify(body) : undefined,
+    cache: "no-store"
+  });
+  if (r.status === 401) { lock(); throw new Error("bad pin"); }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+async function loadUnparsed() {
+  try {
+    const data = await apiUnparsed("GET");
+    unparsed = Array.isArray(data) ? data : [];
+  } catch { /* keep whatever we last had; will retry on next poll */ }
+  renderUnparsed();
+}
+
+function renderUnparsed() {
+  const box = $("#unparsedBox");
+  if (!unparsed.length) { box.style.display = "none"; box.innerHTML = ""; return; }
+  box.style.display = "block";
+  box.innerHTML = `<div class="pendlab">Couldn't read from bank (${unparsed.length})</div>` +
+    unparsed.map(u => `
+      <div class="unparsed" data-id="${esc(u.id)}">
+        <div class="pendmain">
+          <div class="ritem">${esc(u.subject || "Unrecognized email")}</div>
+          <div class="rmeta">${esc(u.from || "")}</div>
+        </div>
+        <div class="pendbtns">
+          <button type="button" class="pbtn add warn" data-act="add">Add manually</button>
+          <button type="button" class="pbtn skip" data-act="skip">✕</button>
+        </div>
+      </div>`).join("");
+}
+
+function openUnparsedSheet(u) {
+  editingId = null;
+  editingPendingId = null;
+  editingUnparsedId = u.id;
+  $("#sheetTitle").textContent = "Add manually";
+  $("#btnDelete").style.display = "none";
+  $("#fAmount").value = "";
+  $("#fItem").value   = "";
+  $("#fNote").value   = u.snippet || u.subject || "";
+  $("#fDate").value   = todayStr();
+  who = PEOPLE[0]; cat = CATEGORIES[0];
+  $("#err").textContent = "";
+  paint();
+  $("#backdrop").classList.add("open");
+}
+
+async function discardUnparsed(id) {
+  unparsed = unparsed.filter(u => u.id !== id);
+  renderUnparsed();
+  try { await apiUnparsed("DELETE", { id }); } catch { /* will reappear on next loadUnparsed if it failed */ }
+}
+
 function setStatus(ok, txt) {
   online = ok;
   $("#dot").className = "dot" + (ok ? "" : " off");
@@ -499,6 +573,7 @@ function paint() {
 function openSheet(x) {
   editingId = x ? x.id : null;
   editingPendingId = null;
+  editingUnparsedId = null;
   $("#sheetTitle").textContent = x ? "Edit expense" : "Add expense";
   $("#btnDelete").style.display = x ? "block" : "none";
   $("#fAmount").value = x ? x.amount : "";
@@ -542,6 +617,16 @@ $("#pendingBox").onclick = e => {
   else if (act === "skip") discardPending(p.id);
 };
 
+$("#unparsedBox").onclick = e => {
+  const row = e.target.closest(".unparsed");
+  if (!row) return;
+  const u = unparsed.find(x => x.id === row.dataset.id);
+  if (!u) return;
+  const act = e.target.closest("button")?.dataset.act;
+  if (act === "add") openUnparsedSheet(u);
+  else if (act === "skip") discardUnparsed(u.id);
+};
+
 $("#btnSave").onclick = () => {
   const amount = parseFloat($("#fAmount").value);
   const item = $("#fItem").value.trim();
@@ -561,6 +646,7 @@ $("#btnSave").onclick = () => {
     editingPendingId = null;
   } else {
     push("POST", payload);
+    if (editingUnparsedId) { discardUnparsed(editingUnparsedId); editingUnparsedId = null; }
   }
   closeSheet();
 };
@@ -606,8 +692,9 @@ function unlock() {
   render();
   load();
   loadPending();
-  setInterval(() => { if (!$("#backdrop").classList.contains("open")) { load(true); loadPending(); } }, POLL_MS);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { load(true); loadPending(); } });
+  loadUnparsed();
+  setInterval(() => { if (!$("#backdrop").classList.contains("open")) { load(true); loadPending(); loadUnparsed(); } }, POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { load(true); loadPending(); loadUnparsed(); } });
 }
 
 function lock() {

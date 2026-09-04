@@ -6,12 +6,16 @@
 // and paste the same value into the Apps Script.
 //
 // Nothing here ever touches the real "expenses" hash. Parsed transactions land in a
-// pending queue that index.html surfaces for you to confirm or discard.
+// pending queue that index.html surfaces for you to confirm or discard. An email we
+// couldn't parse at all (retry:true — new bank, changed format, etc) lands in a
+// separate "unparsed" queue instead, so it's visible in the app rather than only in
+// the Apps Script execution log.
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 const INGEST_SECRET = process.env.INGEST_SECRET;
 const PENDING_KEY = process.env.PENDING_KEY || "inandout:pending";
+const UNPARSED_KEY = process.env.UNPARSED_KEY || "inandout:unparsed";
 
 async function redis(command) {
   const r = await fetch(REDIS_URL, {
@@ -248,6 +252,16 @@ function makeId(p) {
   return "e" + Math.abs(h).toString(36);
 }
 
+// Deterministic id for an unparsed email too, so the same still-unhandled
+// email (re-forwarded every 5 minutes until its parser exists or it's
+// discarded) overwrites its own entry instead of piling up duplicates.
+function makeUnparsedId(from, subject, body) {
+  const raw = `${from}|${subject}|${body.slice(0, 200)}`;
+  let h = 0;
+  for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0;
+  return "u" + Math.abs(h).toString(36);
+}
+
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
@@ -269,9 +283,33 @@ export default async function handler(req, res) {
     const b = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
     const subject = String(b.subject || "").slice(0, 200);
     const body = String(b.body || "").slice(0, 5000);
+    const from = String(b.from || "").slice(0, 200);
 
     const parsed = parseBankEmail(subject, body);
+    const unparsedId = makeUnparsedId(from, subject, body);
+
     if (parsed.skip) {
+      if (parsed.retry) {
+        // genuinely unhandled (new bank, changed format, etc) — surface it in
+        // the app instead of only the Apps Script log
+        await redis([
+          "HSET",
+          UNPARSED_KEY,
+          unparsedId,
+          JSON.stringify({
+            id: unparsedId,
+            subject,
+            from,
+            snippet: body.slice(0, 400),
+            reason: parsed.reason,
+            ts: Date.now(),
+          }),
+        ]);
+      } else {
+        // by-design permanent ignore (login/OTP/credit alert/etc) — clear any
+        // stale unparsed entry from before this became a recognized noise pattern
+        await redis(["HDEL", UNPARSED_KEY, unparsedId]);
+      }
       return res.status(200).json({ ok: true, skipped: true, retry: parsed.retry, reason: parsed.reason });
     }
 
@@ -286,6 +324,9 @@ export default async function handler(req, res) {
     };
 
     await redis(["HSET", PENDING_KEY, id, JSON.stringify(item)]);
+    // clear any stale unparsed entry for this same email (e.g. a parser was
+    // just added for a format that used to fail)
+    await redis(["HDEL", UNPARSED_KEY, unparsedId]);
     return res.status(200).json({ ok: true, item });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });

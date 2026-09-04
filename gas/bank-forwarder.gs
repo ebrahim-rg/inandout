@@ -22,7 +22,10 @@
  * Each processed email gets labelled "Logged" so it's not re-sent on the next
  * run — except a bank/format api/ingest.js doesn't recognize yet, which is
  * deliberately left unlabelled so it gets retried automatically once that
- * bank's parser is added, instead of silently getting lost.
+ * bank's parser is added, instead of silently getting lost. Unrecognized ones
+ * also show up right in the app under "Couldn't read from bank" so you don't
+ * have to check this script's execution log to notice — you can add them by
+ * hand from there, or dismiss them.
  */
 
 const INGEST_URL = "https://inandout-ten.vercel.app/api/ingest";
@@ -43,6 +46,7 @@ function forwardBankAlerts() {
       const payload = {
         subject: msg.getSubject(),
         body: msg.getPlainBody(),
+        from: msg.getFrom(),
       };
       try {
         const resp = UrlFetchApp.fetch(INGEST_URL, {
