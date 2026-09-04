@@ -359,6 +359,9 @@ async function loadPending() {
   try {
     const data = await apiPending("GET");
     pending = Array.isArray(data) ? data : [];
+    // Redis HGETALL doesn't guarantee stable ordering between calls — sort so
+    // the list doesn't visibly reshuffle under you on every 8s poll
+    pending.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   } catch { /* keep whatever we last had; will retry on next poll */ }
   renderPending();
 }
@@ -425,6 +428,8 @@ async function loadUnparsed() {
   try {
     const data = await apiUnparsed("GET");
     unparsed = Array.isArray(data) ? data : [];
+    // same HGETALL ordering issue as loadPending() — keep it stable across polls
+    unparsed.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   } catch { /* keep whatever we last had; will retry on next poll */ }
   renderUnparsed();
 }
