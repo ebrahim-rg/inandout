@@ -74,12 +74,46 @@ function parseMeezan(subject, body) {
   };
 }
 
-// HabibMetro's body format isn't wired up yet — needs a real (redacted) sample
-// email to know the field layout. Recognized but deliberately left unhandled so
-// the Apps Script keeps retrying it instead of marking it "Logged" and losing it.
-function parseHabibMetro(subject) {
+// HabibMetro sends TWO emails per transaction, both subject "HabibMetro Fund
+// Transfer" — a short SMS-style one and a detailed one — but both carry the same
+// Tx ID / Transaction ID, which we use as the dedup key (see makeId) so they
+// collapse into a single pending item instead of showing up twice.
+function parseHabibMetro(subject, body) {
   if (!/HabibMetro Fund Transfer/i.test(subject)) return null;
-  return { skip: true, retry: true, reason: "HabibMetro parser not implemented yet" };
+
+  // Detailed form:
+  //   "PKR 100000.000 has been sent to NAME from your HMB Account *0677.
+  //    Transaction ID: MPBL...
+  //    Date & Time: 2026-09-03 14:03:35.44"
+  let m = body.match(/PKR\s*([\d,]+\.?\d*)\s+has been sent to\s+([^\n]+?)\s+from your HMB Account/i);
+  if (m) {
+    const txid = (body.match(/Transaction ID:\s*(\S+)/i) || [])[1] || "";
+    const dt = body.match(/Date\s*&\s*Time:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/i);
+    return {
+      skip: false,
+      amount: parseFloat(m[1].replace(/,/g, "")),
+      date: dt ? `${dt[1]}-${dt[2]}-${dt[3]}` : "",
+      time: dt ? dt[4] : "",
+      recipient: m[2].trim(),
+      txid,
+    };
+  }
+
+  // Short form:
+  //   "PKR 900.00 sent to NAME from your HMB A/C *0677 on 02-Sep-2026 15:11 via RAAST Tx ID MPBL..."
+  m = body.match(/PKR\s*([\d,]+\.?\d*)\s+sent to\s+([^\n]+?)\s+from your HMB A\/C[^\n]*?\bon\s+(\d{2})-([A-Za-z]{3})-(\d{4})\s+(\d{2}:\d{2})\s+via RAAST Tx ID\s+(\S+)/i);
+  if (m) {
+    return {
+      skip: false,
+      amount: parseFloat(m[1].replace(/,/g, "")),
+      date: `${m[5]}-${MONTHS[m[4]] || "01"}-${m[3]}`,
+      time: m[6],
+      recipient: m[2].trim(),
+      txid: m[7].replace(/\.$/, ""),
+    };
+  }
+
+  return { skip: true, retry: true, reason: "HabibMetro Fund Transfer but body format not recognized" };
 }
 
 function parseBankEmail(subject, body) {
@@ -92,8 +126,10 @@ function parseBankEmail(subject, body) {
 
 // Deterministic id from the transaction's own fields, so re-forwarding the same
 // email twice (e.g. a re-run of the Apps Script) overwrites rather than duplicates.
+// Prefer the bank's own transaction id when we have one (HabibMetro sends two
+// emails per transfer with the same Tx ID — this collapses them into one item).
 function makeId(p) {
-  const raw = `${p.date}|${p.time}|${p.amount}|${p.recipient}`;
+  const raw = p.txid ? `txid:${p.txid}` : `${p.date}|${p.time}|${p.amount}|${p.recipient}`;
   let h = 0;
   for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0;
   return "e" + Math.abs(h).toString(36);

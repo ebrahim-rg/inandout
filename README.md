@@ -111,9 +111,10 @@ silently disappearing.
 
 **Banks currently parsed:**
 - **Meezan Bank** — subject `Debit Transaction Alert` / `Credit Transaction Alert`.
-- **HabibMetro** — subject `HabibMetro Fund Transfer` is recognized but not yet
-  parsed (needs a redacted sample email to know its field layout — the
-  `parseHabibMetro` stub in `api/ingest.js` is where that goes).
+- **HabibMetro** — subject `HabibMetro Fund Transfer`. HabibMetro sends two
+  emails per transfer (a short one and a detailed one); both carry the same
+  Transaction ID, which `api/ingest.js` uses to collapse them into a single
+  pending item instead of showing the same transfer twice.
 
 If a bank changes its email wording, or you add another bank, the fix is in
 `api/ingest.js` — add a new `parseX(subject, body)` function following the same
