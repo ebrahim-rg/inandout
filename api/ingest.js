@@ -116,7 +116,16 @@ function parseHabibMetro(subject, body) {
   return { skip: true, retry: true, reason: "HabibMetro Fund Transfer but body format not recognized" };
 }
 
+// App login / session notifications aren't transactions — ignore permanently
+// rather than retrying forever. Matches "Login Alert", "Log In Alert", "| Login".
+function isLoginNotice(subject) {
+  return /log\s?in/i.test(subject || "");
+}
+
 function parseBankEmail(subject, body) {
+  if (isLoginNotice(subject)) {
+    return { skip: true, retry: false, reason: "login/session notification, not a transaction" };
+  }
   return (
     parseMeezan(subject, body) ||
     parseHabibMetro(subject, body) ||
