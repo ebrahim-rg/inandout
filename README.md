@@ -138,6 +138,32 @@ If a bank changes its email wording, or you add another bank, the fix is in
 `{skip, retry, reason}` / `{skip:false, amount, date, time, recipient}` shape as
 `parseMeezan`, and chain it into `parseBankEmail`.
 
+### Adding a second person's emails (e.g. your spouse)
+
+Apps Script only has access to the Gmail account it's created inside — it can't
+reach into anyone else's inbox. So there's no "add an email address" setting;
+each person who wants their bank alerts auto-forwarded needs their **own**
+Apps Script project, set up in **their own** Google account, following the
+same steps as above:
+
+1. Have them label their own bank alert emails **Banking** in their own Gmail
+   (same idea as yours — everything under that label is what gets searched).
+2. They sign into **their own** Google account at https://script.google.com →
+   New project → paste in `gas/bank-forwarder.gs` (same file, unmodified).
+3. Fill in the **same** `INGEST_URL` and the **same** `INGEST_SECRET` you used
+   for your own script — both scripts talk to the same `/api/ingest` endpoint,
+   so there's nothing new to set up on the Vercel/Upstash side.
+4. Run `forwardBankAlerts` once (grants Gmail access on their account), then
+   add the same time-driven trigger (every 5 minutes) as before.
+
+Both of your scripts feed the same shared pending queue in the app — right now
+there's no indication in a pending card of *whose* email it came from, so
+you'll both see everything in "New from bank" and pick the right payer
+yourselves during review (which you're already doing manually today). A
+natural next step, when you're ready, is adding a `person` field to the
+Apps Script payload (e.g. `"Ebrahim"` vs `"Qadr"`) so `api/ingest.js` can
+pre-fill the payer on each pending item instead of leaving it to guess/default.
+
 ## Reset everything
 
 In the Upstash console → Data Browser → delete the `expenses` key (and `inandout:pending` if you're using bank auto-import).
