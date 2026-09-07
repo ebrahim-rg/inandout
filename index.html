@@ -50,8 +50,9 @@
   .monthnav .mlabel{font-size:14px;font-weight:650;min-width:150px;text-align:center}
   .chip{
     flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;
-    padding:9px 11px;
+    padding:9px 11px;cursor:pointer;user-select:none
   }
+  .chip.on{border-color:var(--chipborder,var(--accent));background:var(--card2)}
   .chip .n{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:5px}
   .chip .v{font-size:17px;font-weight:650;margin-top:2px}
   .pin{width:8px;height:8px;border-radius:50%;display:inline-block}
@@ -236,12 +237,12 @@
     <div class="total" id="total">Rs 0</div>
     <div class="totsub" id="totsub">—</div>
     <div class="splitlab">Paid by</div>
-    <div class="split">
-      <div class="chip">
+    <div class="split" id="split">
+      <div class="chip" id="chipE" data-payer="Ebrahim" style="--chipborder:var(--e)">
         <div class="n"><span class="pin" style="background:var(--e)"></span>Ebrahim</div>
         <div class="v" id="sumE">Rs 0</div>
       </div>
-      <div class="chip">
+      <div class="chip" id="chipQ" data-payer="Qadr" style="--chipborder:var(--q)">
         <div class="n"><span class="pin" style="background:var(--q)"></span>Qadr</div>
         <div class="v" id="sumQ">Rs 0</div>
       </div>
@@ -343,6 +344,7 @@ let pending = [];      // {id, amount, date, recipient, subject, ts} — awaitin
 let unparsed = [];     // {id, subject, from, snippet, reason, ts} — parser gave up, add manually or dismiss
 let knownRules = [];   // {id, pattern, category} — your recipient -> category rules (Settings)
 let filter = "All";
+let payerFilter = null;   // null = both; "Ebrahim"/"Qadr" = clicked that chip to isolate them
 let editingId = null;
 let editingPendingId = null;
 let editingUnparsedId = null;
@@ -630,7 +632,8 @@ function render() {
   $("#mNext").disabled = viewMonth >= currentMonthStr();
 
   const monthItems = items.filter(x => (x.date || "").slice(0, 7) === viewMonth);
-  const list = filter === "All" ? monthItems : monthItems.filter(x => x.category === filter);
+  let list = filter === "All" ? monthItems : monthItems.filter(x => x.category === filter);
+  if (payerFilter) list = list.filter(x => x.payer === payerFilter);
   const sorted = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.ts || 0) - (a.ts || 0));
 
   const total = list.reduce((s, x) => s + (+x.amount || 0), 0);
@@ -638,10 +641,12 @@ function render() {
 
   $("#total").textContent = fmt(total);
   $("#totsub").textContent = list.length
-    ? `${list.length} expense${list.length > 1 ? "s" : ""}${filter !== "All" ? " · " + filter : ""} · avg ${fmt(total / list.length)}`
+    ? `${list.length} expense${list.length > 1 ? "s" : ""}${filter !== "All" ? " · " + filter : ""}${payerFilter ? " · " + payerFilter : ""} · avg ${fmt(total / list.length)}`
     : "No expenses yet";
   $("#sumE").textContent = fmt(byP[PEOPLE[0]] || 0);
   $("#sumQ").textContent = fmt(byP[PEOPLE[1]] || 0);
+  $("#chipE").classList.toggle("on", payerFilter === PEOPLE[0]);
+  $("#chipQ").classList.toggle("on", payerFilter === PEOPLE[1]);
 
   // filters (only categories actually used this month)
   const used = ["All", ...CATEGORIES.filter(c => monthItems.some(x => x.category === c))];
@@ -735,6 +740,15 @@ $("#mPrev").onclick = () => shiftMonth(-1);
 $("#mNext").onclick = () => shiftMonth(1);
 
 $("#filters").onclick = e => { const b = e.target.closest(".f"); if (b) { filter = b.dataset.c; render(); } };
+
+// tap a "Paid by" chip to isolate that person's transactions; tap the same one again to clear
+$("#split").onclick = e => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  const p = chip.dataset.payer;
+  payerFilter = (payerFilter === p) ? null : p;
+  render();
+};
 $("#list").onclick = e => {
   const r = e.target.closest(".row");
   if (r) { const x = items.find(i => i.id === r.dataset.id); if (x) openSheet(x); }
