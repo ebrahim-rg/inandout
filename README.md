@@ -13,6 +13,7 @@ api/ingest.js         # receives forwarded bank alert emails -> "pending"/"unpar
 api/pending.js        # app reads/confirms/discards the pending queue
 api/unparsed.js       # app reads/dismisses emails the parser couldn't understand
 api/classify.js       # Vercel Cron job -> Gemini API -> suggests category/item on pending items
+api/known.js           # app reads/adds/removes your recipient -> category rules (Settings)
 gas/bank-forwarder.gs # Gmail Apps Script that forwards bank alerts to api/ingest.js
 vercel.json           # Cron schedule for api/classify.js
 package.json          # only exists so Vercel treats api/*.js as ESM
@@ -162,21 +163,20 @@ pre-fill, still fully editable before you save.
   as `Authorization: Bearer <value>` when the Cron job runs, which is how the
   endpoint tells a real scheduled run from a random request). Redeploy.
 
-**Known recipients — your own control over this, no prompt engineering needed:**
-edit the `KNOWN_RECIPIENTS` object at the top of `api/classify.js`:
-
-```js
-const KNOWN_RECIPIENTS = {
-  "yousuf": { category: "Help/Staff", item: "Yousuf (house help)" },
-};
-```
-
-The key is matched as a case-insensitive substring against the parsed
-recipient (so `"yousuf"` matches `"Yousuf Ahmed Easypaisa"` too). A match wins
+**Known recipients — no code editing needed:** tap the ⚙ icon in the header
+(small and tucked away, since it's mostly a one-time/occasional setup, not
+something you'll open often) to add a name → category rule, e.g. `yousuf` →
+`Help/Staff`. It's matched as a case-insensitive substring against the parsed
+recipient (so `yousuf` matches `Yousuf Ahmed Easypaisa` too). A match wins
 outright and skips the model entirely for that transaction — if you already
-know who someone is, there's no reason to let an LLM guess. Only recipients
-*not* in this list get sent to Gemini (`gemini-3.5-flash-lite`, free tier —
-see cost note below).
+told the app who someone is, there's no reason to let an LLM guess. Adding or
+removing a rule also re-tags anything already sitting in "New from bank" right
+away, not just future transactions. Only recipients with no matching rule get
+sent to Gemini (`gemini-3.5-flash-lite`, free tier — see cost note below).
+
+Rules are stored in Redis (`inandout:known`, managed via `api/known.js`) —
+`api/classify.js` reads them fresh on every run, no redeploy needed to add
+someone.
 
 **Cost:** at household transaction volume this is effectively free — Gemini's
 free tier covers the token usage entirely; there's no Anthropic/Claude free

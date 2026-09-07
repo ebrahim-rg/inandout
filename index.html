@@ -31,7 +31,9 @@
   }
   .htop{display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px}
   .title{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .hright{display:flex;align-items:center;gap:12px}
   .sync{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:5px}
+  .gear{background:none;border:0;color:var(--dim);font-size:15px;line-height:1;padding:2px;cursor:pointer}
   .dot{width:7px;height:7px;border-radius:50%;background:var(--good)}
   .dot.off{background:var(--bad)}
   .total{font-size:38px;font-weight:700;letter-spacing:-.02em;padding-bottom:2px}
@@ -193,6 +195,17 @@
   .err{color:var(--bad);font-size:13px;margin-top:10px;min-height:18px}
   .foot{text-align:center;color:var(--dim);font-size:11.5px;padding:26px 0 6px}
   .foot a{color:var(--dim)}
+
+  /* ---- known recipients (settings) ---- */
+  .knownHint{font-size:12.5px;color:var(--dim);margin-bottom:14px;line-height:1.5}
+  .knownRow{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .knownRow .kpattern{flex:1;font-size:14.5px;font-weight:600;word-break:break-word}
+  .knownRow .kcat{font-size:12px;color:var(--dim)}
+  .knownRow .kdel{background:none;border:0;color:var(--dim);font-size:15px;cursor:pointer;padding:4px 6px}
+  .knownEmpty{color:var(--dim);font-size:13px;padding:14px 0;text-align:center}
+  .knownAdd{display:flex;gap:8px;margin-top:6px}
+  .knownAdd input{flex:1.3}
+  .knownAdd select{flex:1}
 </style>
 </head>
 <body>
@@ -215,7 +228,10 @@
   <div class="wrap">
     <div class="htop">
       <div class="title">House Expenses</div>
-      <div class="sync"><span class="dot" id="dot"></span><span id="syncTxt">loading…</span></div>
+      <div class="hright">
+        <div class="sync"><span class="dot" id="dot"></span><span id="syncTxt">loading…</span></div>
+        <button type="button" class="gear" id="btnSettings" title="Known recipients" aria-label="Known recipients">⚙</button>
+      </div>
     </div>
     <div class="total" id="total">Rs 0</div>
     <div class="totsub" id="totsub">—</div>
@@ -284,6 +300,30 @@
   </div>
 </div>
 
+<div class="backdrop" id="settingsBackdrop">
+  <div class="sheet" id="settingsSheet">
+    <div class="grab"></div>
+    <h2>Known recipients</h2>
+    <div class="knownHint">Match a name to a category so future bank transactions from
+      them get suggested automatically instead of asking the model. Adding or removing
+      a rule also re-tags anything already sitting in "New from bank".</div>
+
+    <div id="knownList"></div>
+
+    <label>Add a recipient</label>
+    <div class="knownAdd">
+      <input id="knownPattern" type="text" placeholder="e.g. yousuf">
+      <select id="knownCategory"></select>
+    </div>
+    <div class="err" id="knownErr"></div>
+
+    <div class="actions">
+      <button class="btn ghost" id="btnKnownDone">Done</button>
+      <button class="btn primary" id="btnKnownAdd">Add</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    CONFIG — edit these two lines if names/currency ever change
@@ -294,12 +334,14 @@ const PIN = "0101";                   // must match APP_PIN env var on Vercel
 const API = "/api/expenses";          // Vercel serverless fn -> Upstash Redis
 const PENDING_API = "/api/pending";     // auto-detected bank transactions awaiting review
 const UNPARSED_API = "/api/unparsed";   // bank emails the parser couldn't understand at all
+const KNOWN_API = "/api/known";         // your recipient -> category rules (Settings)
 const POLL_MS = 8000;
 
 /* ============================================================ */
 let items = [];        // {id, amount, item, payer, category, date, note, ts}
 let pending = [];      // {id, amount, date, recipient, subject, ts} — awaiting confirm/discard
 let unparsed = [];     // {id, subject, from, snippet, reason, ts} — parser gave up, add manually or dismiss
+let knownRules = [];   // {id, pattern, category} — your recipient -> category rules (Settings)
 let filter = "All";
 let editingId = null;
 let editingPendingId = null;
@@ -493,6 +535,61 @@ async function discardUnparsed(id) {
   try { await apiUnparsed("DELETE", { id }); } catch { /* will reappear on next loadUnparsed if it failed */ }
 }
 
+async function apiKnown(method, body) {
+  const r = await fetch(KNOWN_API, {
+    method,
+    headers: { "Content-Type": "application/json", "x-pin": PIN },
+    body: body ? JSON.stringify(body) : undefined,
+    cache: "no-store"
+  });
+  if (r.status === 401) { lock(); throw new Error("bad pin"); }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+async function loadKnown() {
+  try {
+    const data = await apiKnown("GET");
+    knownRules = Array.isArray(data) ? data : [];
+  } catch { knownRules = []; }
+  renderKnown();
+}
+
+function renderKnown() {
+  const box = $("#knownList");
+  if (!knownRules.length) {
+    box.innerHTML = `<div class="knownEmpty">No rules yet — add one below.</div>`;
+    return;
+  }
+  box.innerHTML = knownRules.map(k => `
+    <div class="knownRow" data-id="${esc(k.id)}">
+      <div class="kpattern">${esc(k.pattern)}</div>
+      <div class="kcat">${esc(k.category)}</div>
+      <button type="button" class="kdel" data-act="del">✕</button>
+    </div>`).join("");
+}
+
+async function addKnown() {
+  const pattern = $("#knownPattern").value.trim();
+  const category = $("#knownCategory").value;
+  $("#knownErr").textContent = "";
+  if (!pattern) { $("#knownErr").textContent = "Enter a name to match."; return; }
+  try {
+    await apiKnown("POST", { pattern, category });
+    $("#knownPattern").value = "";
+    await loadKnown();
+    await loadPending(); // pick up any re-tagged pending items right away
+  } catch {
+    $("#knownErr").textContent = "Couldn't save — check your connection and try again.";
+  }
+}
+
+async function deleteKnown(id) {
+  knownRules = knownRules.filter(k => k.id !== id);
+  renderKnown();
+  try { await apiKnown("DELETE", { id }); } catch { loadKnown(); /* resync if it failed */ }
+}
+
 function setStatus(ok, txt) {
   online = ok;
   $("#dot").className = "dot" + (ok ? "" : " off");
@@ -588,6 +685,7 @@ function prettyDate(d) {
 let who = PEOPLE[0], cat = CATEGORIES[0];
 
 $("#fCat").innerHTML = CATEGORIES.map(c => `<button type="button" data-c="${esc(c)}">${esc(c)}</button>`).join("");
+$("#knownCategory").innerHTML = CATEGORIES.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
 
 function paint() {
   document.querySelectorAll("#fWho button").forEach(b => b.classList.toggle("on", b.dataset.w === who));
@@ -618,6 +716,15 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 $("#fab").onclick = () => openSheet(null);
 $("#btnCancel").onclick = closeSheet;
 $("#backdrop").onclick = e => { if (e.target.id === "backdrop") closeSheet(); };
+
+$("#btnSettings").onclick = () => { loadKnown(); $("#settingsBackdrop").classList.add("open"); };
+$("#btnKnownDone").onclick = () => $("#settingsBackdrop").classList.remove("open");
+$("#settingsBackdrop").onclick = e => { if (e.target.id === "settingsBackdrop") $("#settingsBackdrop").classList.remove("open"); };
+$("#btnKnownAdd").onclick = addKnown;
+$("#knownList").onclick = e => {
+  const row = e.target.closest(".knownRow");
+  if (row && e.target.closest("button")?.dataset.act === "del") deleteKnown(row.dataset.id);
+};
 
 $("#fWho").onclick = e => { const b = e.target.closest("button"); if (b) { who = b.dataset.w; paint(); } };
 $("#fCat").onclick = e => { const b = e.target.closest("button"); if (b) { cat = b.dataset.c; paint(); } };
@@ -679,7 +786,11 @@ $("#btnDelete").onclick = () => {
   if (editingId && confirm("Delete this expense?")) { push("DELETE", { id: editingId }); closeSheet(); }
 };
 
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  closeSheet();
+  $("#settingsBackdrop").classList.remove("open");
+});
 
 /* ---------- pin lock ---------- */
 let entry = "";
