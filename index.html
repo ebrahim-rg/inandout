@@ -446,9 +446,11 @@ function openPendingSheet(p) {
   $("#fAmount").value = p.amount;
   // suggestedItem (from api/classify.js) wins over the raw recipient when present
   $("#fItem").value   = p.suggestedItem || p.recipient || "";
-  // recipient came back empty ("unknown") and nothing was suggested either —
-  // drop the raw email text into notes so there's something to go on
-  $("#fNote").value   = (p.recipient || p.suggestedItem) ? "" : (p.snippet || "");
+  // always keep the raw email text visible for verification, even when there's
+  // a suggestion -- the model (or a known-recipient match) can be confidently
+  // wrong, e.g. guessing "R.Shireen" was household help when it's actually a
+  // sweet shop. Seeing the source line is the only way to catch that.
+  $("#fNote").value   = p.snippet || "";
   $("#fDate").value   = p.date || todayStr();
   // pre-select whoever's script forwarded this — still just a starting point,
   // e.g. a joint account transaction might really be the other person's

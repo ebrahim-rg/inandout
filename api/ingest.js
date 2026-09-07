@@ -24,15 +24,33 @@ const CRON_SECRET = process.env.CRON_SECRET;
 const PENDING_KEY = process.env.PENDING_KEY || "inandout:pending";
 const UNPARSED_KEY = process.env.UNPARSED_KEY || "inandout:unparsed";
 
+// APP_URL lets this be overridden explicitly; otherwise prefer Vercel's own
+// stable production domain, falling back to this deployment's own URL, and
+// finally to the known production URL -- VERCEL_URL isn't guaranteed to be
+// populated in every execution context, and the previous version returned
+// silently when it wasn't set, making a real misfire indistinguishable from
+// "not configured yet." The result is now surfaced in this endpoint's own
+// response instead of being swallowed.
+const APP_URL =
+  process.env.APP_URL ||
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`) ||
+  (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`) ||
+  "https://inandout-ten.vercel.app";
+
 async function triggerClassify() {
-  if (!CRON_SECRET || !process.env.VERCEL_URL) return; // not configured yet, safe no-op
+  if (!CRON_SECRET) return { ok: false, reason: "CRON_SECRET not configured" };
   try {
-    await fetch(`https://${process.env.VERCEL_URL}/api/classify`, {
+    const r = await fetch(`${APP_URL}/api/classify`, {
       method: "POST",
       headers: { Authorization: `Bearer ${CRON_SECRET}` },
     });
-  } catch {
-    /* the daily Cron run will pick this up later */
+    const body = await r.text();
+    return { ok: r.ok, status: r.status, body: body.slice(0, 300) };
+  } catch (e) {
+    // the daily Cron run will still pick this up later, but surface why this
+    // attempt failed instead of swallowing it -- see the "classify" field in
+    // this endpoint's own response
+    return { ok: false, error: String(e.message || e) };
   }
 }
 
@@ -350,8 +368,8 @@ export default async function handler(req, res) {
     // clear any stale unparsed entry for this same email (e.g. a parser was
     // just added for a format that used to fail)
     await redis(["HDEL", UNPARSED_KEY, unparsedId]);
-    await triggerClassify(); // get a suggested category right away, not tomorrow
-    return res.status(200).json({ ok: true, item });
+    const classify = await triggerClassify(); // get a suggested category right away, not tomorrow
+    return res.status(200).json({ ok: true, item, classify });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }
