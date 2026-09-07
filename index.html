@@ -367,16 +367,25 @@ async function loadPending() {
   renderPending();
 }
 
+// which person's script forwarded this — colors the review card border the
+// same way the "Paid by" chips already do, so each of you can spot your own
+// items in the shared queue at a glance
+function personColor(name) {
+  if (name === PEOPLE[0]) return "var(--e)";
+  if (name === PEOPLE[1]) return "var(--q)";
+  return "var(--accent)";
+}
+
 function renderPending() {
   const box = $("#pendingBox");
   if (!pending.length) { box.style.display = "none"; box.innerHTML = ""; return; }
   box.style.display = "block";
   box.innerHTML = `<div class="pendlab">New from bank (${pending.length})</div>` +
     pending.map(p => `
-      <div class="pend" data-id="${esc(p.id)}">
+      <div class="pend" data-id="${esc(p.id)}" style="border-color:${personColor(p.payer)}">
         <div class="pendmain">
           <div class="ritem">${fmt(p.amount)} to ${esc(p.recipient || "unknown")}</div>
-          <div class="rmeta">${esc(prettyDate(p.date))}</div>
+          <div class="rmeta">${esc(prettyDate(p.date))}${p.payer ? " · " + esc(p.payer) : ""}</div>
         </div>
         <div class="pendbtns">
           <button type="button" class="pbtn add" data-act="add">Review</button>
@@ -396,7 +405,10 @@ function openPendingSheet(p) {
   // so there's something to go on instead of guessing
   $("#fNote").value   = p.recipient ? "" : (p.snippet || "");
   $("#fDate").value   = p.date || todayStr();
-  who = PEOPLE[0]; cat = CATEGORIES[0];
+  // pre-select whoever's script forwarded this — still just a starting point,
+  // e.g. a joint account transaction might really be the other person's
+  who = (p.payer && PEOPLE.includes(p.payer)) ? p.payer : PEOPLE[0];
+  cat = CATEGORIES[0];
   $("#err").textContent = "";
   paint();
   $("#backdrop").classList.add("open");
@@ -443,10 +455,10 @@ function renderUnparsed() {
   box.style.display = "block";
   box.innerHTML = `<div class="pendlab">Couldn't read from bank (${unparsed.length})</div>` +
     unparsed.map(u => `
-      <div class="unparsed" data-id="${esc(u.id)}">
+      <div class="unparsed" data-id="${esc(u.id)}" style="border-color:${personColor(u.person)}">
         <div class="pendmain">
           <div class="ritem">${esc(u.subject || "Unrecognized email")}</div>
-          <div class="rmeta">${esc(u.from || "")}</div>
+          <div class="rmeta">${esc(u.from || "")}${u.person ? " · " + esc(u.person) : ""}</div>
         </div>
         <div class="pendbtns">
           <button type="button" class="pbtn add warn" data-act="add">Add manually</button>
@@ -465,7 +477,8 @@ function openUnparsedSheet(u) {
   $("#fItem").value   = "";
   $("#fNote").value   = u.snippet || u.subject || "";
   $("#fDate").value   = todayStr();
-  who = PEOPLE[0]; cat = CATEGORIES[0];
+  who = (u.person && PEOPLE.includes(u.person)) ? u.person : PEOPLE[0];
+  cat = CATEGORIES[0];
   $("#err").textContent = "";
   paint();
   $("#backdrop").classList.add("open");

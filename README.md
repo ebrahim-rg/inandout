@@ -156,20 +156,23 @@ same steps as above:
 1. Have them label their own bank alert emails **Banking** in their own Gmail
    (same idea as yours — everything under that label is what gets searched).
 2. They sign into **their own** Google account at https://script.google.com →
-   New project → paste in `gas/bank-forwarder.gs` (same file, unmodified).
+   New project → paste in `gas/bank-forwarder.gs` (same file, mostly unmodified).
 3. Fill in the **same** `INGEST_URL` and the **same** `INGEST_SECRET` you used
    for your own script — both scripts talk to the same `/api/ingest` endpoint,
-   so there's nothing new to set up on the Vercel/Upstash side.
+   so there's nothing new to set up on the Vercel/Upstash side. Change `PERSON`
+   to their name (e.g. `"Qadr"`) — it must exactly match one of the entries in
+   the `PEOPLE` array at the top of `index.html`'s `<script>` block, or the
+   pre-fill described below won't match anyone.
 4. Run `forwardBankAlerts` once (grants Gmail access on their account), then
    add the same time-driven trigger (every 5 minutes) as before.
 
-Both of your scripts feed the same shared pending queue in the app — right now
-there's no indication in a pending card of *whose* email it came from, so
-you'll both see everything in "New from bank" and pick the right payer
-yourselves during review (which you're already doing manually today). A
-natural next step, when you're ready, is adding a `person` field to the
-Apps Script payload (e.g. `"Ebrahim"` vs `"Qadr"`) so `api/ingest.js` can
-pre-fill the payer on each pending item instead of leaving it to guess/default.
+Both of your scripts feed the same shared pending queue in the app. Each card
+under "New from bank" (and "Couldn't read from bank") gets a colored border —
+the same blue/pink used for the "Paid by" chips elsewhere in the app — showing
+whose script forwarded it, and opening **Review** pre-selects that person as
+the payer. It's still just a starting point, not a lock: a joint-account
+transaction might really belong to the other person, so the payer toggle stays
+fully editable before you save.
 
 ## Reset everything
 

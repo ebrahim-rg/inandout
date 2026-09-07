@@ -41,6 +41,12 @@
 const INGEST_URL = "https://inandout-ten.vercel.app/api/ingest";
 const INGEST_SECRET = "PASTE_THE_SAME_VALUE_AS_VERCEL_INGEST_SECRET";
 
+// Whoever's Gmail account this script is running in — must exactly match one
+// of the names in the PEOPLE array at the top of index.html's <script> block
+// (e.g. "Ebrahim" or "Qadr"). Sent along with every forwarded email so
+// api/ingest.js can pre-select the right payer on the pending item.
+const PERSON = "Ebrahim";
+
 // after: bounds this permanently, on every run (manual or scheduled) — without
 // it, the very first run treats your ENTIRE Banking-labelled history as
 // unprocessed, backfilling months of old real transactions in one go. Move
@@ -82,6 +88,7 @@ function forwardBankAlerts() {
         subject: msg.getSubject(),
         body: msg.getPlainBody(),
         from: msg.getFrom(),
+        person: PERSON,
       };
       try {
         const resp = UrlFetchApp.fetch(INGEST_URL, {

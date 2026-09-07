@@ -284,6 +284,7 @@ export default async function handler(req, res) {
     const subject = String(b.subject || "").slice(0, 200);
     const body = String(b.body || "").slice(0, 5000);
     const from = String(b.from || "").slice(0, 200);
+    const person = String(b.person || "").slice(0, 60); // whose Gmail this came from — see gas/bank-forwarder.gs PERSON
 
     const parsed = parseBankEmail(subject, body);
     const unparsedId = makeUnparsedId(from, subject, body);
@@ -300,6 +301,7 @@ export default async function handler(req, res) {
             id: unparsedId,
             subject,
             from,
+            person,
             snippet: body.slice(0, 400),
             reason: parsed.reason,
             ts: Date.now(),
@@ -319,6 +321,7 @@ export default async function handler(req, res) {
       amount: parsed.amount,
       date: parsed.date,
       recipient: parsed.recipient,
+      payer: person, // pre-selected (and shown as a colored border) in the app; still editable
       subject,
       snippet: body.slice(0, 400), // raw email text, so "unknown" recipients are still checkable
       ts: Date.now(),
