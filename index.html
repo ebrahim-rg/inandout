@@ -386,8 +386,8 @@ function renderPending() {
     pending.map(p => `
       <div class="pend" data-id="${esc(p.id)}" style="border-color:${personColor(p.payer)}">
         <div class="pendmain">
-          <div class="ritem">${fmt(p.amount)} to ${esc(p.recipient || "unknown")}</div>
-          <div class="rmeta">${esc(prettyDate(p.date))}${p.payer ? " · " + esc(p.payer) : ""}</div>
+          <div class="ritem">${fmt(p.amount)} to ${esc(p.suggestedItem || p.recipient || "unknown")}</div>
+          <div class="rmeta">${esc(prettyDate(p.date))}${p.payer ? " · " + esc(p.payer) : ""}${p.suggestedCategory ? " · " + esc(p.suggestedCategory) : ""}</div>
         </div>
         <div class="pendbtns">
           <button type="button" class="pbtn add" data-act="add">Review</button>
@@ -402,15 +402,16 @@ function openPendingSheet(p) {
   $("#sheetTitle").textContent = "Confirm transaction";
   $("#btnDelete").style.display = "none";
   $("#fAmount").value = p.amount;
-  $("#fItem").value   = p.recipient || "";
-  // recipient came back empty ("unknown") — drop the raw email text into notes
-  // so there's something to go on instead of guessing
-  $("#fNote").value   = p.recipient ? "" : (p.snippet || "");
+  // suggestedItem (from api/classify.js) wins over the raw recipient when present
+  $("#fItem").value   = p.suggestedItem || p.recipient || "";
+  // recipient came back empty ("unknown") and nothing was suggested either —
+  // drop the raw email text into notes so there's something to go on
+  $("#fNote").value   = (p.recipient || p.suggestedItem) ? "" : (p.snippet || "");
   $("#fDate").value   = p.date || todayStr();
   // pre-select whoever's script forwarded this — still just a starting point,
   // e.g. a joint account transaction might really be the other person's
   who = (p.payer && PEOPLE.includes(p.payer)) ? p.payer : PEOPLE[0];
-  cat = CATEGORIES[0];
+  cat = (p.suggestedCategory && CATEGORIES.includes(p.suggestedCategory)) ? p.suggestedCategory : CATEGORIES[0];
   $("#err").textContent = "";
   paint();
   $("#backdrop").classList.add("open");

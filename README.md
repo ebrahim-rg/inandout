@@ -12,7 +12,9 @@ api/expenses.js       # Vercel serverless fn -> Upstash Redis
 api/ingest.js         # receives forwarded bank alert emails -> "pending"/"unparsed" queues
 api/pending.js        # app reads/confirms/discards the pending queue
 api/unparsed.js       # app reads/dismisses emails the parser couldn't understand
+api/classify.js       # Vercel Cron job -> Gemini API -> suggests category/item on pending items
 gas/bank-forwarder.gs # Gmail Apps Script that forwards bank alerts to api/ingest.js
+vercel.json           # Cron schedule for api/classify.js
 package.json          # only exists so Vercel treats api/*.js as ESM
 ```
 
@@ -144,6 +146,43 @@ If a bank changes its email wording, or you add another bank, the fix is in
 `api/ingest.js` — add a new `parseX(subject, body)` function following the same
 `{skip, retry, reason}` / `{skip:false, amount, date, time, recipient}` shape as
 `parseMeezan`, and chain it into `parseBankEmail`.
+
+### Auto-suggesting a category (optional)
+
+`api/classify.js`, run every 4 hours by a Vercel Cron job, fills in a suggested
+category and a cleaned-up item title on pending items that don't have one yet —
+Review then opens pre-filled with both instead of the raw recipient string and
+a default category. Nothing here writes to real expenses; it's purely a
+pre-fill, still fully editable before you save.
+
+**Setup:**
+- Get a free API key at https://aistudio.google.com/api-keys.
+- Vercel → Environment Variables → add `GEMINI_API_KEY` (the key) and
+  `CRON_SECRET` (any long random string — Vercel automatically sends it back
+  as `Authorization: Bearer <value>` when the Cron job runs, which is how the
+  endpoint tells a real scheduled run from a random request). Redeploy.
+
+**Known recipients — your own control over this, no prompt engineering needed:**
+edit the `KNOWN_RECIPIENTS` object at the top of `api/classify.js`:
+
+```js
+const KNOWN_RECIPIENTS = {
+  "yousuf": { category: "Help/Staff", item: "Yousuf (house help)" },
+};
+```
+
+The key is matched as a case-insensitive substring against the parsed
+recipient (so `"yousuf"` matches `"Yousuf Ahmed Easypaisa"` too). A match wins
+outright and skips the model entirely for that transaction — if you already
+know who someone is, there's no reason to let an LLM guess. Only recipients
+*not* in this list get sent to Gemini (`gemini-3.5-flash-lite`, free tier —
+see cost note below).
+
+**Cost:** at household transaction volume this is effectively free — Gemini's
+free tier covers the token usage entirely; there's no Anthropic/Claude free
+tier, which is why this uses Gemini instead. If you ever exceed the free
+quota, `GEMINI_MODEL` can be pointed at a different model via env var without
+touching the code.
 
 ### Adding a second person's emails (e.g. your spouse)
 
