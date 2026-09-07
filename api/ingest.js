@@ -10,12 +10,31 @@
 // couldn't parse at all (retry:true — new bank, changed format, etc) lands in a
 // separate "unparsed" queue instead, so it's visible in the app rather than only in
 // the Apps Script execution log.
+//
+// After queuing a new pending item, this also fires an internal call to
+// /api/classify so it gets a suggested category/item right away instead of
+// waiting for that endpoint's once-daily Cron backstop (Vercel Hobby plan
+// only allows daily schedules) -- that Cron run still exists as a safety net
+// for anything that fails here (e.g. a transient Gemini API error).
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 const INGEST_SECRET = process.env.INGEST_SECRET;
+const CRON_SECRET = process.env.CRON_SECRET;
 const PENDING_KEY = process.env.PENDING_KEY || "inandout:pending";
 const UNPARSED_KEY = process.env.UNPARSED_KEY || "inandout:unparsed";
+
+async function triggerClassify() {
+  if (!CRON_SECRET || !process.env.VERCEL_URL) return; // not configured yet, safe no-op
+  try {
+    await fetch(`https://${process.env.VERCEL_URL}/api/classify`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${CRON_SECRET}` },
+    });
+  } catch {
+    /* the daily Cron run will pick this up later */
+  }
+}
 
 async function redis(command) {
   const r = await fetch(REDIS_URL, {
@@ -331,6 +350,7 @@ export default async function handler(req, res) {
     // clear any stale unparsed entry for this same email (e.g. a parser was
     // just added for a format that used to fail)
     await redis(["HDEL", UNPARSED_KEY, unparsedId]);
+    await triggerClassify(); // get a suggested category right away, not tomorrow
     return res.status(200).json({ ok: true, item });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });

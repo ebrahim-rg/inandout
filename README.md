@@ -150,11 +150,18 @@ If a bank changes its email wording, or you add another bank, the fix is in
 
 ### Auto-suggesting a category (optional)
 
-`api/classify.js`, run every 4 hours by a Vercel Cron job, fills in a suggested
-category and a cleaned-up item title on pending items that don't have one yet —
-Review then opens pre-filled with both instead of the raw recipient string and
-a default category. Nothing here writes to real expenses; it's purely a
-pre-fill, still fully editable before you save.
+`api/classify.js` fills in a suggested category and a cleaned-up item title on
+pending items that don't have one yet — Review then opens pre-filled with both
+instead of the raw recipient string and a default category. Nothing here
+writes to real expenses; it's purely a pre-fill, still fully editable before
+you save.
+
+It runs **immediately** after each new transaction is queued (`api/ingest.js`
+triggers it right after writing to the pending queue), so suggestions usually
+show up within seconds, not on some delay. A Vercel Cron job also runs it once
+a day as a safety net, in case a single attempt failed (a transient Gemini API
+error, etc) — Vercel's Hobby plan only allows daily Cron schedules, which is
+fine here since it's just a backstop, not the primary trigger.
 
 **Setup:**
 - Get a free API key at https://aistudio.google.com/api-keys.
