@@ -48,6 +48,9 @@
   }
   .monthnav button:disabled{opacity:.32;cursor:default}
   .monthnav .mlabel{font-size:14px;font-weight:650;min-width:150px;text-align:center}
+  .searchBar{display:flex;gap:8px;align-items:center;padding-bottom:14px}
+  .searchBar input{flex:1}
+  .searchBar button{background:none;border:0;color:var(--dim);font-size:15px;cursor:pointer;padding:6px}
   .chip{
     flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;
     padding:9px 11px;cursor:pointer;user-select:none
@@ -231,6 +234,7 @@
       <div class="title">House Expenses</div>
       <div class="hright">
         <div class="sync"><span class="dot" id="dot"></span><span id="syncTxt">loading…</span></div>
+        <button type="button" class="gear" id="btnSearch" title="Search" aria-label="Search">🔍</button>
         <button type="button" class="gear" id="btnSettings" title="Known recipients" aria-label="Known recipients">⚙</button>
       </div>
     </div>
@@ -247,10 +251,14 @@
         <div class="v" id="sumQ">Rs 0</div>
       </div>
     </div>
-    <div class="monthnav">
+    <div class="monthnav" id="monthnav">
       <button type="button" id="mPrev">‹</button>
       <span class="mlabel" id="mLabel">—</span>
       <button type="button" id="mNext">›</button>
+    </div>
+    <div class="searchBar" id="searchBar" style="display:none">
+      <input id="searchInput" type="text" placeholder="Search expenses…">
+      <button type="button" id="btnSearchClear" aria-label="Clear search">✕</button>
     </div>
   </div>
 </header>
@@ -345,6 +353,7 @@ let unparsed = [];     // {id, subject, from, snippet, reason, ts} — parser ga
 let knownRules = [];   // {id, pattern, category} — your recipient -> category rules (Settings)
 let filter = "All";
 let payerFilter = null;   // null = both; "Ebrahim"/"Qadr" = clicked that chip to isolate them
+let searchQuery = "";     // non-empty = searching across ALL months, ignoring month/category/payer filters
 let editingId = null;
 let editingPendingId = null;
 let editingUnparsedId = null;
@@ -631,31 +640,56 @@ function render() {
   $("#mLabel").textContent = monthLabel(viewMonth);
   $("#mNext").disabled = viewMonth >= currentMonthStr();
 
+  const searching = !!searchQuery;
+  // search looks across ALL months (finding something you don't remember the
+  // date of is the whole point) and bypasses month/category/payer filters —
+  // those get restored automatically once you clear the search, since none
+  // of that state is touched here
+  $("#monthnav").style.opacity = searching ? ".35" : "1";
+  $("#monthnav").style.pointerEvents = searching ? "none" : "auto";
+
   const monthItems = items.filter(x => (x.date || "").slice(0, 7) === viewMonth);
-  let list = filter === "All" ? monthItems : monthItems.filter(x => x.category === filter);
-  if (payerFilter) list = list.filter(x => x.payer === payerFilter);
+  let list;
+  if (searching) {
+    const q = searchQuery.toLowerCase();
+    list = items.filter(x =>
+      (x.item || "").toLowerCase().includes(q) ||
+      (x.note || "").toLowerCase().includes(q) ||
+      (x.payer || "").toLowerCase().includes(q) ||
+      (x.category || "").toLowerCase().includes(q));
+  } else {
+    list = filter === "All" ? monthItems : monthItems.filter(x => x.category === filter);
+    if (payerFilter) list = list.filter(x => x.payer === payerFilter);
+  }
   const sorted = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.ts || 0) - (a.ts || 0));
 
   const total = list.reduce((s, x) => s + (+x.amount || 0), 0);
   const byP = Object.fromEntries(PEOPLE.map(p => [p, list.filter(x => x.payer === p).reduce((s, x) => s + (+x.amount || 0), 0)]));
 
   $("#total").textContent = fmt(total);
-  $("#totsub").textContent = list.length
-    ? `${list.length} expense${list.length > 1 ? "s" : ""}${filter !== "All" ? " · " + filter : ""}${payerFilter ? " · " + payerFilter : ""} · avg ${fmt(total / list.length)}`
-    : "No expenses yet";
+  $("#totsub").textContent = searching
+    ? (list.length ? `${list.length} result${list.length > 1 ? "s" : ""} for "${searchQuery}"` : `No results for "${searchQuery}"`)
+    : (list.length
+        ? `${list.length} expense${list.length > 1 ? "s" : ""}${filter !== "All" ? " · " + filter : ""}${payerFilter ? " · " + payerFilter : ""} · avg ${fmt(total / list.length)}`
+        : "No expenses yet");
   $("#sumE").textContent = fmt(byP[PEOPLE[0]] || 0);
   $("#sumQ").textContent = fmt(byP[PEOPLE[1]] || 0);
-  $("#chipE").classList.toggle("on", payerFilter === PEOPLE[0]);
-  $("#chipQ").classList.toggle("on", payerFilter === PEOPLE[1]);
+  $("#chipE").classList.toggle("on", !searching && payerFilter === PEOPLE[0]);
+  $("#chipQ").classList.toggle("on", !searching && payerFilter === PEOPLE[1]);
 
-  // filters (only categories actually used this month)
-  const used = ["All", ...CATEGORIES.filter(c => monthItems.some(x => x.category === c))];
-  $("#filters").innerHTML = used.map(c =>
-    `<button class="f${c === filter ? " on" : ""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
+  // filters (only categories actually used this month) — hidden while searching
+  $("#filters").style.display = searching ? "none" : "flex";
+  if (!searching) {
+    const used = ["All", ...CATEGORIES.filter(c => monthItems.some(x => x.category === c))];
+    $("#filters").innerHTML = used.map(c =>
+      `<button class="f${c === filter ? " on" : ""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
+  }
 
   // grouped list
   if (!sorted.length) {
-    $("#list").innerHTML = `<div class="empty">Nothing here yet.<br>Tap <b>+ Add expense</b> to start.</div>`;
+    $("#list").innerHTML = searching
+      ? `<div class="empty">No expenses match "${esc(searchQuery)}".</div>`
+      : `<div class="empty">Nothing here yet.<br>Tap <b>+ Add expense</b> to start.</div>`;
     return;
   }
   const groups = {};
@@ -725,6 +759,26 @@ $("#btnCancel").onclick = closeSheet;
 $("#backdrop").onclick = e => { if (e.target.id === "backdrop") closeSheet(); };
 
 $("#btnSettings").onclick = () => { loadKnown(); $("#settingsBackdrop").classList.add("open"); };
+
+$("#btnSearch").onclick = () => {
+  const bar = $("#searchBar");
+  const opening = bar.style.display === "none";
+  bar.style.display = opening ? "flex" : "none";
+  if (opening) {
+    setTimeout(() => $("#searchInput").focus(), 50);
+  } else {
+    searchQuery = "";
+    $("#searchInput").value = "";
+    render();
+  }
+};
+$("#searchInput").oninput = e => { searchQuery = e.target.value.trim(); render(); };
+$("#btnSearchClear").onclick = () => {
+  searchQuery = "";
+  $("#searchInput").value = "";
+  $("#searchBar").style.display = "none";
+  render();
+};
 $("#btnKnownDone").onclick = () => $("#settingsBackdrop").classList.remove("open");
 $("#settingsBackdrop").onclick = e => { if (e.target.id === "settingsBackdrop") $("#settingsBackdrop").classList.remove("open"); };
 $("#btnKnownAdd").onclick = addKnown;
